@@ -11,17 +11,21 @@ Concurrent lifecycle work shall not corrupt image state or stale operator intent
 
 ## Functional Requirement
 
-For one VM, candidate construction requests, admission, activation, promotion,
-and rollback shall not perform conflicting transitions concurrently. Shared
-construction capacity across VMs shall be bounded. Before any start transition,
-the manager shall re-evaluate start authority so an explicit stop issued while
-construction or admission was in progress remains effective.
+For one VM, candidate construction requests, pin refresh, admission,
+activation, promotion, and rollback shall not perform conflicting transitions
+concurrently. Shared construction capacity across VMs shall be bounded. Before
+any start transition, the manager shall re-evaluate start authority so an
+explicit stop issued while construction or admission was in progress remains
+effective. Concurrent start requests for one VM shall not perform duplicate
+pin-refresh transactions or allow an older result to replace a newer admitted
+candidate.
 
 ## Failure Conditions
 
 - Two operations write one VM's candidate or recovery state concurrently.
 - Concurrent rollouts replace each other's recovery reference.
 - Construction concurrency exceeds the configured shared bound.
+- Concurrent starts perform conflicting pin refresh or candidate admission.
 - A stale pre-build decision overrides a later explicit stop.
 
 ## Downstream Handoff

@@ -9,8 +9,9 @@ die() {
 usage() {
   cat >&2 <<'EOF'
 internal usage:
-  nixos-shell-vm-manager register CONFIG IMAGE SOURCE_KIND SOURCE_ID
+  nixos-shell-vm-manager register CONFIG IMAGE SOURCE_KIND SOURCE_ID [LOCK_ID]
   nixos-shell-vm-manager prepare-start CONFIG
+  nixos-shell-vm-manager construct-pin-refresh CONFIG
   nixos-shell-vm-manager stop CONFIG [SUPERVISOR_PID]
   nixos-shell-vm-manager supervise CONFIG
   nixos-shell-vm-manager update CONFIG LOCAL_FLAKE
@@ -48,6 +49,7 @@ load_config() {
   : "${GC_ROOT_DIR:?}" "${CONTROL_DIR:?}" "${LOCK_DIR:?}"
   : "${RUNNER_RELATIVE_PATH:?}" "${HEALTH_COMMAND:?}" "${SYSTEMD_UNIT:?}"
   : "${CONSOLE_ENABLE:?}" "${CONSOLE_SOCKET:?}" "${CONSOLE_SESSION:?}"
+  : "${REFRESH_PINS:?}" "${PIN_REFRESH_FLAKE_ATTRIBUTE:?}"
   valid_vm_name "$VM_NAME" || die "invalid configured VM name: $VM_NAME"
 }
 
@@ -173,11 +175,11 @@ validate_image() {
 }
 
 register_image() {
-  local config=$1 image_arg=$2 source_kind=$3 source_identity=$4
+  local config=$1 image_arg=$2 source_kind=$3 source_identity=$4 lock_identity=${5:-}
   load_config "$config"
   require_mutation_authority
   case "$source_kind" in
-    host-generation|local-working-tree) ;;
+    host-generation|local-working-tree|pin-refresh) ;;
     *) die "invalid candidate source kind: $source_kind" ;;
   esac
 
@@ -188,8 +190,15 @@ register_image() {
     --arg image "$image" \
     --arg sourceKind "$source_kind" \
     --arg sourceIdentity "$source_identity" \
+    --arg lockIdentity "$lock_identity" \
     --arg admittedAt "$admitted_at" \
-    '{image:$image,sourceKind:$sourceKind,sourceIdentity:$sourceIdentity,admittedAt:$admittedAt}')
+    '{
+      image:$image,
+      sourceKind:$sourceKind,
+      sourceIdentity:$sourceIdentity,
+      lockIdentity:(if $lockIdentity == "" then null else $lockIdentity end),
+      admittedAt:$admittedAt
+    }')
 
   lock_lifecycle
   retain_image_unlocked "$image"
@@ -199,8 +208,8 @@ register_image() {
 
   if [[ "$image" == "$current" ]]; then
     jq '.candidate = null' "$STATE_DIR/state.json" >"$temporary"
-    printf '%s: baseline/local output is already current; pending candidate cleared\n' "$VM_NAME"
-  elif [[ "$source_kind" == host-generation && "$image" == "$failed" ]]; then
+    printf '%s: admitted output is already current; pending candidate cleared\n' "$VM_NAME"
+  elif [[ "$source_kind" != local-working-tree && "$image" == "$failed" ]]; then
     jq '.candidate = null' "$STATE_DIR/state.json" >"$temporary"
     printf '%s: failed baseline remains quarantined and will not be retried automatically\n' "$VM_NAME" >&2
   else
@@ -593,6 +602,7 @@ supervise() {
   fi
 
   while true; do
+    maybe_refresh_pins "$config" "$event" || true
     local activation_status=0
     activate_event "$event" || activation_status=$?
     if [[ $activation_status -ne 0 ]]; then
@@ -672,6 +682,82 @@ acquire_build_token() {
     done
     sleep 0.2
   done
+}
+
+pin_refresh_event_is_eligible() {
+  case "$1" in
+    boot|explicit-start|guest-shutdown) return 0 ;;
+    force-candidate) return 1 ;;
+    *) die "invalid supervisor event: $1" ;;
+  esac
+}
+
+construct_pin_refresh_candidate() (
+  local config=$1
+  load_config "$config"
+  require_mutation_authority
+  [[ -n ${PIN_REFRESH_FLAKE:-} ]] || die "$VM_NAME has no approved pin-refresh flake"
+  [[ -d "$PIN_REFRESH_FLAKE" ]] || die "pin-refresh flake does not exist: $PIN_REFRESH_FLAKE"
+  [[ -f "$PIN_REFRESH_FLAKE/flake.nix" ]] || die "pin-refresh source lacks flake.nix"
+  [[ -f "$PIN_REFRESH_FLAKE/flake.lock" ]] || die "pin-refresh source lacks flake.lock"
+
+  ensure_directories
+  exec {CONSTRUCTION_FD}>"$LOCK_DIR/construction.lock"
+  flock "$CONSTRUCTION_FD"
+  acquire_build_token
+
+  local workspace
+  workspace=$(mktemp -d "$RUNTIME_DIR/.pin-refresh.XXXXXX")
+  # Invoked indirectly by the EXIT trap below.
+  # shellcheck disable=SC2329
+  cleanup_pin_refresh_workspace() {
+    [[ -n ${workspace:-} && -d "$workspace" ]] && rm -rf -- "$workspace"
+  }
+  trap cleanup_pin_refresh_workspace EXIT
+
+  cp -a -- "$PIN_REFRESH_FLAKE/." "$workspace/"
+  chmod -R u+w -- "$workspace"
+  "$NIX_BIN" flake update --refresh --flake "path:$workspace"
+  [[ -f "$workspace/flake.lock" ]] || die "pin refresh did not produce flake.lock"
+
+  local lock_identity archive_json archive output_lines output
+  lock_identity="sha256:$(sha256sum "$workspace/flake.lock" | cut -d ' ' -f 1)"
+  archive_json=$("$NIX_BIN" flake archive --json --no-update-lock-file \
+    --no-write-lock-file "path:$workspace")
+  archive=$(jq -r '.path // empty' <<<"$archive_json")
+  if [[ ${REQUIRE_STORE_IMAGES:-1} == 1 ]]; then
+    [[ "$archive" == /nix/store/* ]] || die "Nix did not return an immutable refreshed source archive"
+  else
+    [[ -d "$archive" ]] || die "test refreshed archive path does not exist"
+  fi
+
+  output_lines=$("$NIX_BIN" build --no-link --print-out-paths \
+    --no-update-lock-file --no-write-lock-file \
+    "path:$archive#$PIN_REFRESH_FLAKE_ATTRIBUTE")
+  if [[ $(grep -c . <<<"$output_lines") -ne 1 ]]; then
+    die "pin-refresh image build returned an unexpected number of outputs"
+  fi
+  output=$(head -n 1 <<<"$output_lines")
+  register_image "$config" "$output" pin-refresh "$archive" "$lock_identity"
+
+  flock -u "$BUILD_TOKEN_FD"
+  exec {BUILD_TOKEN_FD}>&-
+  flock -u "$CONSTRUCTION_FD"
+  exec {CONSTRUCTION_FD}>&-
+)
+
+maybe_refresh_pins() {
+  local config=$1 event=$2
+  [[ "$REFRESH_PINS" == 1 ]] || return 0
+  pin_refresh_event_is_eligible "$event" || return 0
+  if bash "$0" construct-pin-refresh "$config"; then
+    printf '%s: dependency pins refreshed before %s\n' "$VM_NAME" "$event"
+  else
+    local status=$?
+    printf '%s: pin refresh failed before %s; using host-pinned selection\n' \
+      "$VM_NAME" "$event" >&2
+    return "$status"
+  fi
 }
 
 request_rollout_with_epoch() {
@@ -792,8 +878,9 @@ dispatch_status() {
 command_name=$1
 shift
 case "$command_name" in
-  register) [[ $# -eq 4 ]] || usage; register_image "$@" ;;
+  register) [[ $# -ge 4 && $# -le 5 ]] || usage; register_image "$@" ;;
   prepare-start) [[ $# -eq 1 ]] || usage; prepare_start "$@" ;;
+  construct-pin-refresh) [[ $# -eq 1 ]] || usage; construct_pin_refresh_candidate "$@" ;;
   stop) [[ $# -ge 1 && $# -le 2 ]] || usage; stop_service "$@" ;;
   supervise) [[ $# -eq 1 ]] || usage; supervise "$@" ;;
   update) [[ $# -eq 2 ]] || usage; update_from_local_flake "$@" ;;

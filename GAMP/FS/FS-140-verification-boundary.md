@@ -14,10 +14,11 @@ Functional claims require current construction and integration evidence.
 The project's normal verification entrypoint shall actively test required
 baseline construction, complete offline readiness, immutable local capture,
 unified admission, build isolation, provenance and precedence, stop races,
-health-gated promotion, rollback, and persistent-data preservation. Required
-negative cases shall be executed and shall fail when their protected predicate
-is violated. Construction and integration evidence shall not be presented as
-live host or final system acceptance.
+best-effort pin refresh and host-pinned fallback, health-gated promotion,
+rollback, and persistent-data preservation. Required negative cases shall be
+executed and shall fail when their protected predicate is violated. Construction
+and integration evidence shall not be presented as live host or final system
+acceptance.
 
 ## Failure Conditions
 

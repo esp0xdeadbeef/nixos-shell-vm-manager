@@ -6,13 +6,18 @@ Transactional, offline-ready lifecycle management for
 The consumer flake builds every assigned VM image as part of its NixOS host
 generation. Host activation only admits those immutable outputs as candidates;
 it never starts or restarts a VM. Runtime startup consumes a local image and its
-closure and never evaluates or builds a flake.
+closure by default. A per-VM opt-in can best-effort refresh an approved flake's
+dependency pins and construct a candidate before eligible starts.
 
 ## Guarantees
 
 - A running VM remains active while a baseline or local candidate is built.
 - Failed builds do not alter `current`, `candidate`, or the running process.
 - Baseline images use the consumer host's own pinned dependency graph.
+- Pin refresh is disabled by default; enabled refresh updates only an isolated
+  copy and never rewrites the consumer's host-generation lock.
+- Failed pin refresh leaves all admitted slots unchanged and starts the local
+  host-pinned image when one is available.
 - A local update snapshots `flake.nix`, `flake.lock`, and source into the Nix
   store without refreshing the lock.
 - Baseline and local candidates use the same process plus functional-health
@@ -71,10 +76,18 @@ repository URL or knowledge of the consumer's layout:
         restartOnGuestShutdown = true;
         rolloutCandidateOnGuestShutdown = true;
         useCandidateOnExplicitStart = true;
+        refreshPins = false;
         guestShutdownJitter = {
           minSeconds = 1;
           maxSeconds = 4;
         };
+      };
+
+      # Required only when activation.refreshPins is enabled.
+      pinRefresh = {
+        flake = self.outPath;
+        flakeAttribute =
+          "nixosConfigurations.my-vm.config.system.build.nixos-shell";
       };
 
       # Enabled by default. These are the default values:
@@ -97,6 +110,27 @@ Every enabled `image` is added to `system.extraDependencies`. Consequently,
 building the host generation builds all assigned images; a missing or failed
 image prevents that generation from completing. Activation registers the
 result as a `host-generation` candidate without changing the running VM.
+
+### Optional pin refresh
+
+Set `activation.refreshPins = true` to re-resolve the approved VM flake's
+declared inputs before a boot start, ordinary explicit service start, or
+guest-shutdown restart. The manager copies `pinRefresh.flake` to a private
+writable workspace, updates that copy's `flake.lock`, archives it immutably,
+and builds `pinRefresh.flakeAttribute`. The configured source is retained by the
+host generation and is never modified.
+
+Every eligible start performs `nix flake update --refresh` in that isolated
+copy, so upstream pin changes are picked up without a background timer. The
+resulting image is admitted as a `pin-refresh` candidate with source and lock
+provenance, then uses the normal health-gated promotion and rollback
+transaction.
+
+Refresh is best effort. Resolution, archive, or build failure leaves all image
+slots unchanged and continues with the locally available host-pinned image.
+`vm-update`, `vm-rollout` of an admitted candidate, rollback, and recovery never
+refresh pins. Normal startup remains fully offline when the flag is absent or
+false.
 
 Each `healthCheck.command` is mandatory and VM-specific. Process survival alone
 cannot promote a candidate. For an HTTP service, for example:
@@ -149,8 +183,14 @@ flowchart TD
   C --> P[Candidate remains pending]
   P --> E{Authorized event}
   E -- guest shutdown --> J[Configured inclusive jitter]
-  E -- vm-rollout / explicit start --> S[Select candidate by policy]
-  J --> S
+  E -- vm-rollout --> S[Select candidate by policy]
+  E -- eligible normal start --> RP{refreshPins enabled?}
+  J --> RP
+  RP -- no --> S
+  RP -- yes --> RB[Update copied lock and build immutable image]
+  RB -- failure --> S
+  RB -- success --> RC[Admit pin-refresh candidate]
+  RC --> S
   S --> HC{Runner process and functional health pass?}
   HC -- yes --> PR[Promote candidate; retain old current as previous]
   HC -- no --> F[Quarantine candidate and restart current]
@@ -194,7 +234,8 @@ sudo vm-update my-vm /path/to/local/flake
 The directory must contain both `flake.nix` and `flake.lock`. The source is
 archived first, with lock updates and lock writes disabled. A stop issued after
 the action starts revokes its final rollout while leaving a successful candidate
-pending.
+pending. `vm-update` deliberately preserves the selected local lock even when
+the instance enables automatic pin refresh.
 
 Roll out an already admitted candidate or inspect state:
 
@@ -240,5 +281,7 @@ nix flake check
 
 Checks include NixOS module evaluation and seeded-invalid policy assertions,
 ShellCheck, isolated state-machine tests with fake immutable runners, and a real
-NixOS/systemd integration VM. HAT and SAT evidence are separate GAMP layers;
+NixOS/systemd integration VM. Pin-refresh checks include updated-lock capture,
+source immutability, disabled and excluded paths, failed-refresh fallback, and
+real systemd admission. HAT and SAT evidence are separate GAMP layers;
 construction checks do not imply live-host or stakeholder acceptance.

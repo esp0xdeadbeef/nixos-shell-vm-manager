@@ -213,6 +213,23 @@
               }
             ];
           };
+          invalidPinRefresh = lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                system.stateVersion = "26.05";
+                services.nixosShellVmManager = {
+                  enable = true;
+                  instances.invalid = {
+                    image = fakeImage pkgs "invalid" "baseline";
+                    healthCheck.command = "true";
+                    activation.refreshPins = true;
+                  };
+                };
+              }
+            ];
+          };
           duplicateConsolePath = lib.nixosSystem {
             inherit system;
             modules = [
@@ -254,11 +271,15 @@
           duplicateConsolePathResult = builtins.tryEval (
             builtins.deepSeq duplicateConsolePath.config.system.build.toplevel true
           );
+          pinRefreshResult = builtins.tryEval (
+            builtins.deepSeq invalidPinRefresh.config.system.build.toplevel true
+          );
         in
         {
           module-evaluation =
             assert evaluation.config.systemd.services.test-vm-vm.serviceConfig.Restart == "no";
             assert !evaluation.config.services.nixosShellVmManager.instances.test-vm.activation.startOnBoot;
+            assert !evaluation.config.services.nixosShellVmManager.instances.test-vm.activation.refreshPins;
             assert
               evaluation.config.services.nixosShellVmManager.instances.test-vm.runner.relativePath
               == "bin/run-compatible-vm";
@@ -277,6 +298,7 @@
             assert !carrierStartPolicyResult.success;
             assert !consolePathResult.success;
             assert !duplicateConsolePathResult.success;
+            assert !pinRefreshResult.success;
             pkgs.runCommand "nixos-shell-vm-manager-module-evaluation" { } ''
               touch "$out"
             '';

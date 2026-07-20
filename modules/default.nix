@@ -92,6 +92,19 @@ let
         description = "Attribute built from an immutable local flake snapshot.";
       };
 
+      pinRefresh = {
+        flake = mkOption {
+          type = types.nullOr types.path;
+          default = null;
+          description = "Immutable approved VM flake copied before an enabled pin refresh.";
+        };
+        flakeAttribute = mkOption {
+          type = types.str;
+          default = "nixosConfigurations.${name}.config.system.build.nixos-shell";
+          description = "Image attribute built from the immutably captured refreshed flake.";
+        };
+      };
+
       activation = {
         startOnBoot = mkOption {
           type = types.bool;
@@ -108,6 +121,11 @@ let
         useCandidateOnExplicitStart = mkOption {
           type = types.bool;
           default = true;
+        };
+        refreshPins = mkOption {
+          type = types.bool;
+          default = false;
+          description = "Whether eligible starts best-effort refresh the approved VM flake pins.";
         };
         guestShutdownJitter = {
           minSeconds = mkOption {
@@ -264,6 +282,13 @@ let
       RESTART_ON_GUEST_SHUTDOWN=${bool instance.activation.restartOnGuestShutdown}
       ROLLOUT_CANDIDATE_ON_GUEST_SHUTDOWN=${bool instance.activation.rolloutCandidateOnGuestShutdown}
       USE_CANDIDATE_ON_EXPLICIT_START=${bool instance.activation.useCandidateOnExplicitStart}
+      REFRESH_PINS=${bool instance.activation.refreshPins}
+      PIN_REFRESH_FLAKE=${
+        escapeShellArg (
+          if instance.pinRefresh.flake == null then "" else toString instance.pinRefresh.flake
+        )
+      }
+      PIN_REFRESH_FLAKE_ATTRIBUTE=${escapeShellArg instance.pinRefresh.flakeAttribute}
       JITTER_MIN_SECONDS=${toString instance.activation.guestShutdownJitter.minSeconds}
       JITTER_MAX_SECONDS=${toString instance.activation.guestShutdownJitter.maxSeconds}
       EPHEMERAL_ROOT=${bool instance.storage.ephemeralRoot}
@@ -315,6 +340,23 @@ let
       {
         assertion = instance.localFlakeAttribute != "";
         message = "${name}: localFlakeAttribute must not be empty";
+      }
+      {
+        assertion = !instance.activation.refreshPins || instance.pinRefresh.flake != null;
+        message = "${name}: activation.refreshPins requires pinRefresh.flake";
+      }
+      {
+        assertion = instance.pinRefresh.flakeAttribute != "";
+        message = "${name}: pinRefresh.flakeAttribute must not be empty";
+      }
+      {
+        assertion =
+          instance.pinRefresh.flake == null
+          || (
+            builtins.pathExists "${instance.pinRefresh.flake}/flake.nix"
+            && builtins.pathExists "${instance.pinRefresh.flake}/flake.lock"
+          );
+        message = "${name}: pinRefresh.flake must contain flake.nix and flake.lock";
       }
       {
         assertion =
@@ -497,7 +539,11 @@ in
       }
     ) instanceConfigs;
 
-    system.extraDependencies = mapAttrsToList (_: instance: instance.image) instances;
+    system.extraDependencies =
+      mapAttrsToList (_: instance: instance.image) instances
+      ++ lib.filter (source: source != null) (
+        mapAttrsToList (_: instance: instance.pinRefresh.flake) instances
+      );
 
     system.activationScripts.nixosShellVmManager = {
       deps = [ "etc" ];

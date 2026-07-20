@@ -24,3 +24,4 @@ unauthorized and is not implied by any status in this matrix.
 | FS-130 | FS-130-HDS-010 | FS-030-HDS-010-SDS-010 | FS-130-HDS-010-SDS-010-SMS-010 | CLI validation and live action |
 | FS-140 | FS-140-HDS-010 | FS-140-HDS-010-SDS-010 | FS-140-HDS-010-SDS-010-SMS-010 | current SMT, SIT, authorized HAT |
 | FS-150 | FS-150-HDS-010 | FS-150-HDS-010-SDS-010 | FS-150-HDS-010-SDS-010-SMS-010 | offline console input and stable-endpoint integration |
+| FS-160 | FS-160-HDS-010 | FS-160-HDS-010-SDS-010 | FS-160-HDS-010-SDS-010-SMS-010 | refreshed-lock positive, disabled/excluded negatives, failed-refresh fallback, and systemd integration |

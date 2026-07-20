@@ -4,6 +4,7 @@
   activation ? { },
   storage ? { },
   runner ? { },
+  pinRefresh ? { },
   description ? "nixos-shell VM",
   localFlakeAttribute ? null,
 }:
@@ -14,6 +15,7 @@
     activation
     storage
     runner
+    pinRefresh
     description
     ;
 }

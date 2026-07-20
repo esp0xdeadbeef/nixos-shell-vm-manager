@@ -19,6 +19,11 @@ let
   interrupted = makeImage "test-vm" "interrupted";
   guestCandidate = makeImage "test-vm" "guest-candidate";
   compatibleBaseline = makeImageAt "alias-vm" "compatible" "compatible-baseline";
+  refreshBaseline = makeImage "refresh-vm" "host-pinned";
+  refreshFlake = builtins.path {
+    path = ./pin-refresh-flake;
+    name = "pin-refresh-flake";
+  };
 in
 pkgs.testers.runNixOSTest {
   name = "nixos-shell-vm-manager-systemd";
@@ -27,9 +32,14 @@ pkgs.testers.runNixOSTest {
     imports = [ self.nixosModules.default ];
     system.stateVersion = "26.05";
     environment.systemPackages = [ pkgs.jq ];
+    nix.settings.experimental-features = [
+      "nix-command"
+      "flakes"
+    ];
     # This test service has no IP network access. Its local functional check,
     # image selection, promotion, and rollback must still work.
     systemd.services.test-vm-vm.serviceConfig.IPAddressDeny = "any";
+    systemd.services.refresh-vm-vm.serviceConfig.IPAddressDeny = "any";
     system.extraDependencies = [
       good
       bad
@@ -73,6 +83,21 @@ pkgs.testers.runNixOSTest {
           relativePath = "bin/run-compatible-vm";
           stopGraceSeconds = 1;
         };
+      };
+      instances.refresh-vm = {
+        image = refreshBaseline;
+        activation.refreshPins = true;
+        pinRefresh = {
+          flake = refreshFlake;
+          flakeAttribute = "packages.x86_64-linux.refresh-vm";
+        };
+        healthCheck = {
+          command = "test $(cat /run/fake-vm/refresh-active) = pin-refreshed";
+          timeoutSeconds = 1;
+          retries = 3;
+          intervalSeconds = 0;
+        };
+        runner.stopGraceSeconds = 1;
       };
     };
   };
@@ -158,5 +183,15 @@ pkgs.testers.runNixOSTest {
     machine.succeed("test $(cat /run/fake-vm/active) = compatible-baseline")
     machine.succeed("systemctl stop alias-vm-vm.service")
     machine.succeed("test $(jq -r .phase /var/lib/nixos-shell-vm-manager/alias-vm/state.json) = idle")
+
+    # FS-160-HDS-010-SDS-010: a real systemd start with no service IP access
+    # refreshes the local flake lock, admits its immutable output, and promotes.
+    machine.fail("systemctl is-active --quiet refresh-vm-vm.service")
+    machine.succeed("systemctl start refresh-vm-vm.service")
+    machine.wait_until_succeeds("test $(jq -r .current.sourceKind /var/lib/nixos-shell-vm-manager/refresh-vm/state.json) = pin-refresh")
+    machine.succeed("test $(cat /run/fake-vm/refresh-active) = pin-refreshed")
+    machine.succeed("jq -e '.current.lockIdentity | startswith(\"sha256:\")' /var/lib/nixos-shell-vm-manager/refresh-vm/state.json")
+    machine.succeed("systemctl stop refresh-vm-vm.service")
+    machine.succeed("test $(jq -r .phase /var/lib/nixos-shell-vm-manager/refresh-vm/state.json) = idle")
   '';
 }

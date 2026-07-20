@@ -30,6 +30,7 @@ does not prescribe shell functions, Nix module internals, or test results.
 | FS-130-HDS-010 | FS-130 | Root operator command environment |
 | FS-140-HDS-010 | FS-140 | Construction, integration, and acceptance environments |
 | FS-150-HDS-010 | FS-150 | Stable host-local interactive terminal endpoint |
+| FS-160-HDS-010 | FS-160 | Optional pin-refresh construction environment |
 
 The corresponding controlled fullspec is named
 `GAMP/HDS/<full-HDS-ID>.md`.
@@ -38,8 +39,10 @@ The corresponding controlled fullspec is named
 
 The consumer flake designates hosts and supplies complete image derivations.
 The initial authorized HAT host is `s-tau`; no design depends on that hostname.
-Images, manager executables, health commands, and runner closures are retained
-by the host generation. Runtime startup consumes those local objects only.
+Images, manager executables, health commands, runner closures, and any approved
+pin-refresh source are retained by the host generation. Runtime startup consumes
+local objects only unless a VM explicitly enables online pin refresh; refresh
+failure retains the local host-pinned startup path.
 
 Host-controlled state is divided into `/var/lib` image metadata and optional
 persistent guest state, `/var/cache` replaceable runtime disks, `/run` session
@@ -50,7 +53,8 @@ not cross the guest network boundary.
 
 ## Boundary
 
-The consumer owns VM definitions, dependency pins, image derivations, network
-configuration, and functional-health meaning. The manager owns admission,
+The consumer owns VM definitions, baseline dependency pins, approved refresh
+sources and build targets, image derivations, network configuration, and
+functional-health meaning. The manager owns refresh isolation, admission,
 authority, activation, promotion, rollback, and concurrency. HAT and SAT do not
 follow from design or construction evidence.

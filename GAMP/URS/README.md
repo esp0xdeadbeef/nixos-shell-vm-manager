@@ -32,6 +32,15 @@ All artifacts required to start a baseline VM shall already be present on the
 host after a successful host build. Starting a previously prepared VM shall not
 require internet access, dependency resolution, or image construction.
 
+A VM may independently opt into refreshing the dependency pins of its
+declaratively approved VM flake before an authorized normal start. Without this
+policy, the VM shall start from the image built with the host-approved pins.
+
+Pin refresh shall be best effort. Failure shall leave admitted images unchanged
+and fall back to the locally available host-pinned image. Pin refresh shall not
+alter the host generation's approved pins, override an explicit stop, or delay
+rollback and recovery.
+
 An operator shall be able to attach an interactive terminal to each running VM
 through a stable host-local endpoint. Console access shall not depend on guest
 network connectivity. The endpoint shall remain the same when the manager

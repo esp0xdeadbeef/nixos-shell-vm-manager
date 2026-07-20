@@ -27,6 +27,7 @@ Fullspec: `GAMP/FS/FS-020-offline-runtime-readiness.md`.
 
 A successful host generation shall contain every image and runtime dependency
 required to start its assigned baseline VMs without build or network access.
+An enabled pin-refresh attempt shall not remove this offline fallback.
 
 ### FS-030 Immutable Local Candidate
 
@@ -40,8 +41,9 @@ built candidate.
 
 Fullspec: `GAMP/FS/FS-040-unified-candidate-admission.md`.
 
-Baseline and local outputs shall pass the same admission checks and enter the
-same candidate lifecycle without changing the running or known-good image.
+Baseline, local, and pin-refresh outputs shall pass the same admission
+checks and enter the same candidate lifecycle without changing the running or
+known-good image.
 
 ### FS-050 Non-disruptive Construction
 
@@ -54,10 +56,10 @@ previously admitted candidate unchanged until a replacement build succeeds.
 
 Fullspec: `GAMP/FS/FS-060-candidate-provenance-and-precedence.md`.
 
-Every candidate shall retain immutable provenance. A local candidate shall
-remain pending until the next successful host activation supplies a newer
-declarative baseline candidate; candidate replacement shall never implicitly
-replace the known-good image.
+Every candidate shall retain immutable provenance. Pin-refresh candidates shall
+record their refreshed lock identity and follow the same explicit precedence
+rules; candidate replacement shall never implicitly replace the known-good
+image.
 
 ### FS-070 Per-VM Activation Variables
 
@@ -65,7 +67,8 @@ Fullspec: `GAMP/FS/FS-070-per-vm-activation-variables.md`.
 
 Each VM shall independently configure boot start, guest-shutdown restart,
 candidate selection on guest shutdown and explicit start, and the bounded
-guest-shutdown jitter interval.
+guest-shutdown jitter interval. It shall also independently opt into or out of
+best-effort pre-start pin refresh.
 
 ### FS-075 Explicit-stop Precedence
 
@@ -126,8 +129,9 @@ a later explicit stop.
 Fullspec: `GAMP/FS/FS-140-verification-boundary.md`.
 
 The normal project check shall actively prove construction and integration
-predicates. Live host and final system acceptance shall remain separately
-authorized activities.
+predicates, including optional pin-refresh failure and host-pinned fallback.
+Live host and final system acceptance shall remain separately authorized
+activities.
 
 ### FS-150 Stable Offline Interactive Console
 
@@ -137,15 +141,28 @@ Each running VM shall expose an attachable host-local interactive terminal that
 does not depend on guest networking. Its configured endpoint shall be stable
 across image selection, rollout, guest-shutdown recovery, and rollback.
 
+### FS-160 Optional Pre-start Pin Refresh
+
+Fullspec: `GAMP/FS/FS-160-optional-pre-start-pin-refresh.md`.
+
+When explicitly enabled for a VM, each authorized normal start shall first
+attempt to update the dependency pins of its declaratively approved VM flake
+and construct a candidate. Successful results shall use the normal admission
+and rollout transaction; failure shall preserve admitted state and continue
+with the locally available host-pinned image.
+
 ## Boundaries
 
-- Host generation construction and local development construction are distinct
-  candidate sources with one shared admission and rollout lifecycle.
-- VM startup from an accepted host generation is offline and never invokes
-  candidate construction.
+- Host generation construction, local development construction, and optional
+  pre-start pin-refresh construction are distinct candidate sources with one
+  shared admission and rollout lifecycle.
+- VM startup from an accepted host generation is offline by default. Enabling
+  pin refresh authorizes an online construction attempt, but its host-pinned
+  fallback remains locally startable.
 - Candidate admission does not imply activation or promotion.
 - Explicit stop and guest-initiated shutdown are distinct lifecycle events.
 - Image rollback preserves, but does not rewind, persistent guest data.
+- Rollback and recovery starts never perform pin refresh.
 - Console attachment is host-local and is not a guest-network health signal.
 - HAT and SAT remain outside scope until explicitly authorized by the
   stakeholder.

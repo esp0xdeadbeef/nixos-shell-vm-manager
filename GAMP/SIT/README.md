@@ -12,7 +12,7 @@ nix build --print-build-logs .#checks.x86_64-linux.systemd-integration
 ```
 
 Result: `OK`, output
-`/nix/store/7c4ixihqspvw850nqb6c6hvpq9712808-vm-test-run-nixos-shell-vm-manager-systemd`.
+`/nix/store/6m9v5s1hcj3afyaa02jc7a05bb2xmv4d-vm-test-run-nixos-shell-vm-manager-systemd`.
 The test used a real NixOS VM and real systemd. Its managed fixture service had
 `IPAddressDeny=any`; image selection and startup therefore completed without IP
 network access.
@@ -31,3 +31,4 @@ network access.
 | FS-120-HDS-010-SDS-010 | OK | External test configuration imported `nixosModules.default`, supplied direct derivations and policy without repository layout knowledge, and started an aliased instance through its configured compatible runner path |
 | FS-140-HDS-010-SDS-010 | OK | Current NixOS test exercised positive and negative integration paths; this verdict is not HAT or SAT |
 | FS-150-HDS-010-SDS-010 | OK | With `IPAddressDeny=any` on the managed service, the test sent input through `/run/nixos-shell/test-vm.tmux`, matched its pane PID to the exact runner, retained the endpoint through rollout, rollback, and guest restart, and verified stop cleanup |
+| FS-160-HDS-010-SDS-010 | OK | An opted-in real systemd service ran Nix lock update, immutable archive and build against a retained local no-input fixture, admitted `pin-refresh` source and lock provenance, passed functional health, and promoted while the service had `IPAddressDeny=any` |

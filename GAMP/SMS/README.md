@@ -17,6 +17,7 @@ Scope: implementable modules
 | FS-130-HDS-010-SDS-010-SMS-010 | FS-030-HDS-010-SDS-010, FS-120-HDS-010-SDS-010 | operator dispatcher module |
 | FS-140-HDS-010-SDS-010-SMS-010 | FS-140-HDS-010-SDS-010 | test modules and evidence entrypoint |
 | FS-150-HDS-010-SDS-010-SMS-010 | FS-150-HDS-010-SDS-010 | console configuration and supervisor adapter |
+| FS-160-HDS-010-SDS-010-SMS-010 | FS-160-HDS-010-SDS-010 | optional pin-refresh construction module |
 
 All command modules are delivered by `scripts/nixos-shell-vm-manager.sh` as one
 versioned executable with subcommands. The executable accepts only a generated,

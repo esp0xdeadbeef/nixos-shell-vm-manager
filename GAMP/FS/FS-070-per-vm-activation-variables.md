@@ -21,6 +21,7 @@ activation = {
   restartOnGuestShutdown = true;
   rolloutCandidateOnGuestShutdown = true;
   useCandidateOnExplicitStart = true;
+  refreshPins = false;
 
   guestShutdownJitter = {
     minSeconds = 1;
@@ -43,6 +44,13 @@ known-good image shall be restarted.
 a pending candidate. When disabled or when no candidate is pending, the
 explicit start shall select the known-good image.
 
+`refreshPins` shall determine whether an authorized normal start first attempts
+the pre-start pin refresh defined by FS-160. The default shall preserve fully
+offline, host-pinned startup. The variable applies to configured boot starts,
+ordinary explicit service starts, and guest-shutdown restarts. It shall not
+apply to `vm-update`, rollout of an already admitted candidate, rollback, or
+recovery.
+
 Before an automatic guest-shutdown restart, the manager shall choose a delay
 within the inclusive `guestShutdownJitter.minSeconds` through
 `guestShutdownJitter.maxSeconds` interval.
@@ -50,6 +58,8 @@ within the inclusive `guestShutdownJitter.minSeconds` through
 The jitter bounds shall be non-negative and the minimum shall not exceed the
 maximum. Enabling candidate rollout on guest shutdown while guest-shutdown
 restart is disabled shall be rejected as a contradictory configuration.
+Enabling pin refresh without a declaratively approved VM flake and build target
+shall also be rejected.
 
 ## Failure Conditions
 
@@ -58,6 +68,8 @@ restart is disabled shall be rejected as a contradictory configuration.
 - Guest-shutdown recovery starts a VM while `restartOnGuestShutdown` is
   disabled.
 - Candidate selection ignores the applicable per-VM variable.
+- Pin refresh runs while `refreshPins` is disabled.
+- Pin refresh is attempted for an excluded action.
 - Automatic guest recovery uses a delay outside the configured bounds.
 - Contradictory or invalid variable combinations are accepted.
 

@@ -21,20 +21,23 @@ Scope: software interfaces and state transitions
 | FS-120-HDS-010-SDS-010 | FS-120-HDS-010 | NixOS module and generated instance configuration |
 | FS-140-HDS-010-SDS-010 | FS-140-HDS-010 | Layered verification entrypoints |
 | FS-150-HDS-010-SDS-010 | FS-150-HDS-010 | Stable tmux console adapter |
+| FS-160-HDS-010-SDS-010 | FS-160-HDS-010, FS-050-HDS-010, FS-110-HDS-010 | Serialized pin-refresh pipeline |
 
 ## State Model
 
 The registry is one atomically replaced JSON document per VM. Image records are
-immutable and contain `image`, `sourceKind`, `sourceIdentity`, and `admittedAt`.
+immutable and contain `image`, `sourceKind`, `sourceIdentity`, `lockIdentity`,
+and `admittedAt`.
 The slots are `current`, `candidate`, `previous`, and `failed`; `phase` is one
 of `idle`, `activating`, `running`, `rolling-back`, or
 `operator-intervention`. Slot images are independently retained as Nix GC roots.
 
 The public `<vm>-vm.service` runs a foreground supervisor. It starts and
 observes the exact selected image runner through a host-local terminal
-multiplexer. Candidate builds never run in that service. A natural runner exit
-is a guest shutdown; a supervisor stop is an explicit/host stop and cannot enter
-guest recovery.
+multiplexer. Baseline and local candidate builds never run in that service. An
+enabled pin refresh may construct a candidate before an eligible start while no
+runner is being replaced. A natural runner exit is a guest shutdown; a
+supervisor stop is an explicit/host stop and cannot enter guest recovery.
 
 ## Transaction
 
@@ -46,5 +49,7 @@ is terminal and visible through service failure and registry phase.
 
 ## Boundary
 
-No runtime path calls `nix`, resolves a flake, or refreshes a lock. The local
-pipeline may construct. Registry admission and activation remain distinct.
+Normal host-pinned startup does not call `nix`, resolve a flake, or refresh a
+lock. Only the explicitly enabled FS-160 path may do so, and failure returns to
+host-pinned selection. The local pipeline may construct. Registry admission and
+activation remain distinct.

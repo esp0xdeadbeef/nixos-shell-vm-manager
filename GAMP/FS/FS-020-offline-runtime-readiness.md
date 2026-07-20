@@ -13,15 +13,20 @@ An accepted host generation contains the complete runtime basis for its VMs.
 
 After successful host-generation construction, each assigned baseline image and
 every dependency required to launch it shall be locally retained. Starting the
-VM shall consume only those local artifacts and shall not perform source
-resolution, dependency updates, image construction, or network access. A
+VM with pin refresh disabled shall consume only those local artifacts and shall
+not perform source resolution, dependency updates, image construction, or
+network access. Enabling pin refresh may add an online construction attempt,
+but shall not remove or mutate the local host-pinned image. If that attempt
+fails, the host-pinned image shall remain startable without network access. A
 missing local image shall produce an explicit start failure rather than an
-implicit online recovery attempt.
+unconfigured online recovery attempt.
 
 ## Failure Conditions
 
-- Starting an accepted baseline invokes image construction.
-- Network unavailability prevents launch of a complete local baseline.
+- Starting an accepted baseline with pin refresh disabled invokes image
+  construction or network access.
+- Network unavailability prevents launch of a complete local host-pinned image
+  after an enabled pin-refresh attempt fails.
 - A missing local artifact causes an implicit remote fetch or source update.
 
 ## Downstream Handoff

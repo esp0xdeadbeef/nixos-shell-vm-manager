@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mkdir -p /run/fake-vm
+printf 'pin-refreshed\n' >/run/fake-vm/refresh-active
+cleanup() {
+  rm -f -- /run/fake-vm/refresh-active
+}
+trap cleanup EXIT TERM INT
+while true; do
+  sleep 1
+done

@@ -11,16 +11,19 @@ Candidate construction is independent from current runtime availability.
 
 ## Functional Requirement
 
-While either candidate source is being constructed, the running VM shall remain
-active on its current image. Construction shall not stop, restart, or reattach
-the VM. A failed build shall not change the known-good image, recovery image,
-or previously admitted candidate and shall not schedule activation.
+While any baseline, local, or pin-refresh candidate is being constructed,
+a running VM shall remain active on its current image. Construction shall not
+stop, restart, or reattach the VM. A failed build shall not change the
+known-good image, recovery image, or previously admitted candidate and shall not
+schedule candidate activation. If a start event initiated pin refresh, failure
+may continue that already-authorized start with the unchanged host-pinned image.
 
 ## Failure Conditions
 
 - Beginning or completing a build interrupts the running VM.
 - Build failure alters an image slot or recovery reference.
-- A failed build schedules or authorizes rollout.
+- A failed build schedules or authorizes candidate rollout.
+- Pin-refresh construction stops a VM that was still running.
 
 ## Downstream Handoff
 
