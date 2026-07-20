@@ -18,26 +18,33 @@ handler="$test_root/qga-handler"
 printf '#!%s\n' "${BASH:?}" >"$handler"
 cat >>"$handler" <<'EOF'
 set -euo pipefail
-IFS= read -r request
-printf '%s\n' "$request" >>"$QGA_REQUEST_LOG"
-case "$(jq -r .execute <<<"$request")" in
-  guest-ping)
-    printf '{"return":{}}\n'
-    ;;
-  guest-exec)
-    printf '{"return":{"pid":42}}\n'
-    ;;
-  guest-exec-status)
-    if [[ $QGA_GUEST_EXIT_CODE == 0 ]]; then
-      printf '{"return":{"exited":true,"exitcode":0}}\n'
-    else
-      printf '{"return":{"exited":true,"exitcode":1,"err-data":"Y3JpdGljYWwgdW5pdCBmYWlsZWQK"}}\n'
-    fi
-    ;;
-  *)
-    printf '{"error":{"class":"CommandNotFound","desc":"unexpected request"}}\n'
-    ;;
-esac
+# Simulate a response retained from a probe that disconnected before reading it.
+printf '{"return":{"pid":999}}\n'
+while IFS= read -r request; do
+  printf '%s\n' "$request" >>"$QGA_REQUEST_LOG"
+  case "$(jq -r .execute <<<"$request")" in
+    guest-sync)
+      jq -cn --argjson id "$(jq -er .arguments.id <<<"$request")" \
+        '{return:$id}'
+      ;;
+    guest-ping)
+      printf '{"return":{}}\n'
+      ;;
+    guest-exec)
+      printf '{"return":{"pid":42}}\n'
+      ;;
+    guest-exec-status)
+      if [[ $QGA_GUEST_EXIT_CODE == 0 ]]; then
+        printf '{"return":{"exited":true,"exitcode":0}}\n'
+      else
+        printf '{"return":{"exited":true,"exitcode":1,"out-data":"aW5hY3RpdmUK","err-data":"Y3JpdGljYWwgdW5pdCBmYWlsZWQK"}}\n'
+      fi
+      ;;
+    *)
+      printf '{"error":{"class":"CommandNotFound","desc":"unexpected request"}}\n'
+      ;;
+  esac
+done
 EOF
 chmod +x "$handler"
 
@@ -77,6 +84,9 @@ jq -se --arg path "$guest_command" --argjson expected "$expected_arguments" '
     "capture-output": true
   }
 ' "$request_log" >/dev/null
+jq -se '
+  map(.execute)[:3] == ["guest-sync", "guest-ping", "guest-exec"]
+' "$request_log" >/dev/null
 kill "$listener_pid"
 wait "$listener_pid" 2>/dev/null || true
 listener_pid=
@@ -87,6 +97,9 @@ if "$health_check" "$socket" "$guest_command" "${guest_arguments[@]}" \
   printf 'failed guest command was accepted as healthy\n' >&2
   exit 1
 fi
+grep -Fx 'guest command failed with exit code 1' \
+  "$test_root/failure.err" >/dev/null
+grep -Fx 'inactive' "$test_root/failure.err" >/dev/null
 grep -Fx 'critical unit failed' "$test_root/failure.err" >/dev/null
 
 printf 'QEMU guest-agent systemd health tests passed\n'

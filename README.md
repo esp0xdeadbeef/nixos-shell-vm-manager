@@ -146,7 +146,10 @@ inside the per-VM control directory. The manager removes that transient socket
 before launch and after runner exit so a stale endpoint cannot block recovery.
 The flake exports `packages.<system>.qga-systemd-health`, which performs a
 guest-agent ping and then executes a caller-selected command inside that exact
-guest. Promotion follows the guest command's exit status.
+guest. The helper uses one synchronized QGA connection, so responses buffered
+before guest-agent readiness cannot be mistaken for the current request.
+Promotion follows the guest command's exit status; captured guest stdout and
+stderr are logged when the command fails.
 
 The module's `carrierControls` option starts selected instances on carrier-up
 and explicitly stops them on carrier-down. Carrier-controlled instances may not
