@@ -214,7 +214,20 @@ socket by default. It does not use guest networking, so the console remains
 attachable when the guest has no network access:
 
 ```console
+sudo vm-attach my-vm
+```
+
+The equivalent low-level tmux command is:
+
+```console
 tmux -S /run/nixos-shell/my-vm.tmux attach -t vm
+```
+
+`tmux list-sessions` without `-S` inspects tmux's unrelated default server. To
+inspect a VM console directly, always provide its socket:
+
+```console
+tmux -S /run/nixos-shell/my-vm.tmux list-sessions
 ```
 
 The same socket and session name are recreated for explicit starts, candidate
@@ -223,7 +236,46 @@ the immutable image path changes. `console.socketPath` and
 `console.sessionName` are configurable per VM, and `console.enable = false`
 opts out. Stopping the VM service removes its live console endpoint.
 
+After `nixos-rebuild switch`, an already running VM intentionally keeps its
+old manager process because VM services set `restartIfChanged = false`. This
+protects availability, but it also means a VM started by a manager generation
+without console support cannot gain a tmux session in place. `vm-attach` reports
+this as an unavailable session. The new console is created on the next
+deliberate service stop/start; do not restart solely to obtain it when downtime
+is unacceptable.
+
 ## Operator commands
+
+First list the configured instance names:
+
+```console
+vm-list
+```
+
+Use those exact names with the other `vm-*` commands. Names such as `my-vm` in
+this README are examples, not literal commands for every host. Only the
+systemd unit adds the `-vm.service` suffix: instance `s-test-l-esp` maps to
+service `s-test-l-esp-vm.service`.
+
+| Task | Command |
+| --- | --- |
+| List managed instance names | `vm-list` |
+| Inspect registry, authority, and runner PID | `sudo vm-status VM` |
+| Attach the offline console | `sudo vm-attach VM` |
+| Build and roll out a local working tree | `sudo vm-update VM /path/to/flake` |
+| Roll out an admitted candidate | `sudo vm-rollout VM` |
+| Explicitly start or stop | `sudo systemctl start\|stop VM-vm.service` |
+
+`nixos-shell-vm-manager` itself is the internal systemd engine. Subcommands
+such as its internal `status` and `update` take generated configuration paths,
+not VM names. Run `nixos-shell-vm-manager --help` to see that internal boundary;
+operators normally do not call it directly.
+
+`vm-status VM` returns JSON. `current` is the proven image in use;
+`candidate` is merely pending until an authorized rollout succeeds. `phase`
+describes the lifecycle state, `authority.explicitlyStopped` explains whether
+automatic starts are blocked, and `runnerPid` identifies the observed runner.
+A non-null candidate does not mean the running VM has already changed.
 
 Build and transactionally roll out from an explicit local working tree:
 

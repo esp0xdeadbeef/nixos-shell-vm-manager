@@ -168,6 +168,16 @@ export TEST_OBSERVATION_DIR=$observation
 export FAKE_SYSTEMCTL_LOG="$test_root/systemctl.log"
 : >"$FAKE_SYSTEMCTL_LOG"
 
+# Public help identifies the operator wrappers, and attach fails clearly when
+# the per-VM console has been explicitly disabled.
+bash "$manager" --help >"$test_root/help.out" 2>&1
+grep -q '^  vm-attach VM$' "$test_root/help.out"
+if bash "$manager" attach "$config" >"$test_root/attach.out" 2>"$test_root/attach.err"; then
+  exit 1
+fi
+grep -q 'console.enable = false' "$test_root/attach.err"
+[[ $(bash "$manager" dispatch-list "$test_root") == test-vm ]]
+
 # Admission is non-activating and first explicit start promotes the baseline.
 bash "$manager" register "$config" "$baseline" host-generation baseline-id
 [[ $(jq -r '.candidate.sourceKind' "$test_root/state/state.json") == host-generation ]]

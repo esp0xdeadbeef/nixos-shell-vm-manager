@@ -8,10 +8,22 @@ die() {
 
 usage() {
   cat >&2 <<'EOF'
+operator commands (use the instance name, without the -vm.service suffix):
+  vm-list
+  vm-status VM
+  vm-attach VM
+  vm-update VM LOCAL_FLAKE
+  vm-rollout VM
+  systemctl start|stop VM-vm.service
+
+The nixos-shell-vm-manager executable is the internal service engine. Its
+CONFIG arguments are generated .conf paths, not VM names:
+
 internal usage:
   nixos-shell-vm-manager register CONFIG IMAGE SOURCE_KIND SOURCE_ID [LOCK_ID]
   nixos-shell-vm-manager prepare-start CONFIG
   nixos-shell-vm-manager construct-pin-refresh CONFIG
+  nixos-shell-vm-manager attach CONFIG
   nixos-shell-vm-manager stop CONFIG [SUPERVISOR_PID]
   nixos-shell-vm-manager supervise CONFIG
   nixos-shell-vm-manager update CONFIG LOCAL_FLAKE
@@ -20,8 +32,10 @@ internal usage:
   nixos-shell-vm-manager dispatch-update CONFIG_DIR VM LOCAL_FLAKE
   nixos-shell-vm-manager dispatch-rollout CONFIG_DIR VM
   nixos-shell-vm-manager dispatch-status CONFIG_DIR VM
+  nixos-shell-vm-manager dispatch-attach CONFIG_DIR VM
+  nixos-shell-vm-manager dispatch-list CONFIG_DIR
 EOF
-  exit 64
+  exit "${1:-64}"
 }
 
 valid_vm_name() {
@@ -853,6 +867,18 @@ show_status() {
   unlock_lifecycle
 }
 
+attach_console() {
+  local config=$1
+  load_config "$config"
+  [[ "$CONSOLE_ENABLE" == 1 ]] || die "$VM_NAME has console.enable = false"
+  [[ -S "$CONSOLE_SOCKET" ]] || die \
+    "$VM_NAME console socket is not active; start the VM service first"
+  if ! tmux -S "$CONSOLE_SOCKET" has-session -t "$CONSOLE_SESSION" 2>/dev/null; then
+    die "$VM_NAME console session is unavailable; a VM kept running across a host switch may still use the previous manager generation and needs a deliberate restart"
+  fi
+  exec env -u TMUX tmux -S "$CONSOLE_SOCKET" attach-session -t "$CONSOLE_SESSION"
+}
+
 dispatch_update() {
   [[ $# -eq 3 ]] || usage
   local config
@@ -874,13 +900,34 @@ dispatch_status() {
   show_status "$config"
 }
 
+dispatch_attach() {
+  [[ $# -eq 2 ]] || usage
+  local config
+  config=$(config_for_name "$1" "$2")
+  attach_console "$config"
+}
+
+dispatch_list() {
+  [[ $# -eq 1 ]] || usage
+  local config_dir=$1 config found=0
+  [[ -d "$config_dir" ]] || die "instance configuration directory does not exist: $config_dir"
+  shopt -s nullglob
+  for config in "$config_dir"/*.conf; do
+    basename "${config%.conf}"
+    found=1
+  done
+  [[ $found -eq 1 ]] || die "no managed VMs found in $config_dir"
+}
+
 [[ $# -ge 1 ]] || usage
 command_name=$1
 shift
 case "$command_name" in
+  help|-h|--help) [[ $# -eq 0 ]] || usage; usage 0 ;;
   register) [[ $# -ge 4 && $# -le 5 ]] || usage; register_image "$@" ;;
   prepare-start) [[ $# -eq 1 ]] || usage; prepare_start "$@" ;;
   construct-pin-refresh) [[ $# -eq 1 ]] || usage; construct_pin_refresh_candidate "$@" ;;
+  attach) [[ $# -eq 1 ]] || usage; attach_console "$@" ;;
   stop) [[ $# -ge 1 && $# -le 2 ]] || usage; stop_service "$@" ;;
   supervise) [[ $# -eq 1 ]] || usage; supervise "$@" ;;
   update) [[ $# -eq 2 ]] || usage; update_from_local_flake "$@" ;;
@@ -889,5 +936,7 @@ case "$command_name" in
   dispatch-update) dispatch_update "$@" ;;
   dispatch-rollout) dispatch_rollout "$@" ;;
   dispatch-status) dispatch_status "$@" ;;
+  dispatch-attach) dispatch_attach "$@" ;;
+  dispatch-list) dispatch_list "$@" ;;
   *) usage ;;
 esac

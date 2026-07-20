@@ -62,6 +62,8 @@ let
           ''
         )
         [
+          "vm-attach"
+          "vm-list"
           "vm-update"
           "vm-rollout"
           "vm-status"
