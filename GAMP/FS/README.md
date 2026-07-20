@@ -129,6 +129,14 @@ The normal project check shall actively prove construction and integration
 predicates. Live host and final system acceptance shall remain separately
 authorized activities.
 
+### FS-150 Stable Offline Interactive Console
+
+Fullspec: `GAMP/FS/FS-150-stable-offline-interactive-console.md`.
+
+Each running VM shall expose an attachable host-local interactive terminal that
+does not depend on guest networking. Its configured endpoint shall be stable
+across image selection, rollout, guest-shutdown recovery, and rollback.
+
 ## Boundaries
 
 - Host generation construction and local development construction are distinct
@@ -138,5 +146,6 @@ authorized activities.
 - Candidate admission does not imply activation or promotion.
 - Explicit stop and guest-initiated shutdown are distinct lifecycle events.
 - Image rollback preserves, but does not rewind, persistent guest data.
+- Console attachment is host-local and is not a guest-network health signal.
 - HAT and SAT remain outside scope until explicitly authorized by the
   stakeholder.

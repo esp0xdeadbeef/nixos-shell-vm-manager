@@ -47,6 +47,7 @@ load_config() {
   : "${VM_NAME:?}" "${STATE_DIR:?}" "${RUNTIME_DIR:?}" "${PERSISTENT_DIR:?}"
   : "${GC_ROOT_DIR:?}" "${CONTROL_DIR:?}" "${LOCK_DIR:?}"
   : "${RUNNER_RELATIVE_PATH:?}" "${HEALTH_COMMAND:?}" "${SYSTEMD_UNIT:?}"
+  : "${CONSOLE_ENABLE:?}" "${CONSOLE_SOCKET:?}" "${CONSOLE_SESSION:?}"
   valid_vm_name "$VM_NAME" || die "invalid configured VM name: $VM_NAME"
 }
 
@@ -310,20 +311,59 @@ qmp_powerdown() {
     socat -t 1 - "UNIX-CONNECT:$CONTROL_DIR/qmp.sock" >/dev/null 2>&1 || true
 }
 
+console_pane_value() {
+  local format=$1
+  tmux -S "$CONSOLE_SOCKET" display-message \
+    -p -t "$CONSOLE_SESSION:0.0" "$format" 2>/dev/null
+}
+
+runner_is_alive() {
+  local runner_pid=$1
+  if [[ "$CONSOLE_ENABLE" == 1 ]]; then
+    [[ $(console_pane_value '#{pane_dead}' || true) == 0 ]]
+  else
+    kill -0 "$runner_pid" 2>/dev/null
+  fi
+}
+
+console_exit_status() {
+  local status
+  status=$(console_pane_value '#{pane_dead_status}' || true)
+  if [[ "$status" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$status"
+  else
+    printf '1\n'
+  fi
+}
+
+cleanup_console() {
+  [[ "$CONSOLE_ENABLE" == 1 ]] || return 0
+  if [[ -S "$CONSOLE_SOCKET" ]]; then
+    tmux -S "$CONSOLE_SOCKET" kill-server 2>/dev/null || true
+  fi
+  rm -f -- "$CONSOLE_SOCKET"
+}
+
 stop_child() {
   local child_pid=$1
-  kill -0 "$child_pid" 2>/dev/null || return 0
+  if ! runner_is_alive "$child_pid"; then
+    cleanup_console
+    return 0
+  fi
   qmp_powerdown
   kill -TERM "$child_pid" 2>/dev/null || true
   local count=0
-  while kill -0 "$child_pid" 2>/dev/null && (( count < STOP_GRACE_SECONDS * 10 )); do
+  while runner_is_alive "$child_pid" && (( count < STOP_GRACE_SECONDS * 10 )); do
     sleep 0.1
     count=$((count + 1))
   done
-  if kill -0 "$child_pid" 2>/dev/null; then
+  if runner_is_alive "$child_pid"; then
     kill -KILL "$child_pid" 2>/dev/null || true
   fi
-  wait "$child_pid" 2>/dev/null || true
+  if [[ "$CONSOLE_ENABLE" != 1 ]]; then
+    wait "$child_pid" 2>/dev/null || true
+  fi
+  cleanup_console
 }
 
 prepare_storage_unlocked() {
@@ -351,24 +391,42 @@ launch_image_unlocked() {
   if [[ "$PERSISTENT_DISK_ENABLE" == 1 ]]; then
     qemu_arguments+=( -drive "file=$PERSISTENT_DIR/$PERSISTENT_DISK_FILE,if=virtio,format=qcow2,cache=none" )
   fi
-  (
-    cd "$RUNTIME_DIR"
-    export NIX_DISK_IMAGE="$RUNTIME_DIR/$ROOT_DISK_FILE"
-    exec "$runner" "${arguments[@]}" "${qemu_arguments[@]}"
-  ) &
-  CHILD_PID=$!
+  if [[ "$CONSOLE_ENABLE" == 1 ]]; then
+    local console_command
+    mkdir -p "$(dirname "$CONSOLE_SOCKET")"
+    cleanup_console
+    printf -v console_command 'cd %q && exec env NIX_DISK_IMAGE=%q %q' \
+      "$RUNTIME_DIR" "$RUNTIME_DIR/$ROOT_DISK_FILE" "$runner"
+    local argument
+    for argument in "${arguments[@]}" "${qemu_arguments[@]}"; do
+      printf -v console_command '%s %q' "$console_command" "$argument"
+    done
+    tmux -S "$CONSOLE_SOCKET" \
+      start-server \; \
+      set-option -g remain-on-exit on \; \
+      new-session -d -s "$CONSOLE_SESSION" "$console_command"
+    CHILD_PID=$(console_pane_value '#{pane_pid}')
+    [[ "$CHILD_PID" =~ ^[0-9]+$ ]] || die "could not determine console runner PID"
+  else
+    (
+      cd "$RUNTIME_DIR"
+      export NIX_DISK_IMAGE="$RUNTIME_DIR/$ROOT_DISK_FILE"
+      exec "$runner" "${arguments[@]}" "${qemu_arguments[@]}"
+    ) &
+    CHILD_PID=$!
+  fi
   atomic_text "$CONTROL_DIR/runner.pid" "$CHILD_PID"
 }
 
 health_check_unlocked() {
   local child_pid=$1 attempt=1
   while (( attempt <= HEALTH_RETRIES )); do
-    if ! kill -0 "$child_pid" 2>/dev/null; then
+    if ! runner_is_alive "$child_pid"; then
       printf '%s: runner process exited before health succeeded\n' "$VM_NAME" >&2
       return 1
     fi
     if timeout --foreground "$HEALTH_TIMEOUT_SECONDS" bash -c "$HEALTH_COMMAND"; then
-      kill -0 "$child_pid" 2>/dev/null || return 1
+      runner_is_alive "$child_pid" || return 1
       return 0
     fi
     if (( attempt < HEALTH_RETRIES )); then
@@ -551,15 +609,23 @@ supervise() {
     fi
     local active_pid=$CHILD_PID
     child_status=0
-    while kill -0 "$active_pid" 2>/dev/null; do
-      set +e
-      wait "$active_pid"
-      child_status=$?
-      set -e
-      if ! kill -0 "$active_pid" 2>/dev/null; then
-        break
-      fi
-    done
+    if [[ "$CONSOLE_ENABLE" == 1 ]]; then
+      while runner_is_alive "$active_pid"; do
+        sleep 0.2
+      done
+      child_status=$(console_exit_status)
+      cleanup_console
+    else
+      while kill -0 "$active_pid" 2>/dev/null; do
+        set +e
+        wait "$active_pid"
+        child_status=$?
+        set -e
+        if ! kill -0 "$active_pid" 2>/dev/null; then
+          break
+        fi
+      done
+    fi
     rm -f -- "$CONTROL_DIR/runner.pid" "$CONTROL_DIR/qmp.sock" "$CONTROL_DIR/qga.sock"
 
     if [[ $stopping -eq 1 ]]; then

@@ -34,9 +34,20 @@ let
       qemu
       socat
       systemd
+      tmux
       util-linux
     ];
     text = builtins.readFile ../scripts/nixos-shell-vm-manager.sh;
+  };
+
+  carrierWatcher = pkgs.writeShellApplication {
+    name = "nixos-shell-vm-carrier-watcher";
+    runtimeInputs = with pkgs; [
+      coreutils
+      jq
+      systemd
+    ];
+    text = builtins.readFile ../scripts/carrier-watcher.sh;
   };
 
   operatorPackage = pkgs.symlinkJoin {
@@ -179,10 +190,56 @@ let
           default = 30;
         };
       };
+
+      console = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Whether to expose the runner through an attachable local tmux console.";
+        };
+        socketPath = mkOption {
+          type = types.str;
+          default = "/run/nixos-shell/${name}.tmux";
+          description = "Stable host-local tmux socket used for the VM console.";
+        };
+        sessionName = mkOption {
+          type = types.str;
+          default = "vm";
+          description = "tmux session name exposed through the VM console socket.";
+        };
+      };
+    };
+  };
+
+  carrierControlModule = { name, ... }: {
+    options = {
+      interface = mkOption {
+        type = types.str;
+        description = "Host interface whose carrier controls the selected VM instances.";
+      };
+      instances = mkOption {
+        type = types.listOf types.str;
+        description = "Managed VM names started on carrier-up and stopped on carrier-down.";
+      };
+      pollIntervalSeconds = mkOption {
+        type = types.ints.positive;
+        default = 5;
+      };
+      dryRun = mkOption {
+        type = types.bool;
+        default = false;
+      };
+      description = mkOption {
+        type = types.str;
+        default = "Start or stop nixos-shell VMs from carrier state";
+      };
     };
   };
 
   instances = filterAttrs (_: instance: instance.enable) cfg.instances;
+  consoleSockets = mapAttrsToList (_: instance: instance.console.socketPath) (
+    filterAttrs (_: instance: instance.console.enable) instances
+  );
 
   configFileFor =
     name: instance:
@@ -215,6 +272,9 @@ let
       PERSISTENT_DISK_FILE=${escapeShellArg instance.storage.persistentDisk.fileName}
       PERSISTENT_DISK_SIZE=${escapeShellArg instance.storage.persistentDisk.size}
       STOP_GRACE_SECONDS=${toString instance.runner.stopGraceSeconds}
+      CONSOLE_ENABLE=${bool instance.console.enable}
+      CONSOLE_SOCKET=${escapeShellArg instance.console.socketPath}
+      CONSOLE_SESSION=${escapeShellArg instance.console.sessionName}
       LOCAL_FLAKE_ATTRIBUTE=${escapeShellArg instance.localFlakeAttribute}
       SYSTEMD_UNIT=${escapeShellArg "${name}-vm.service"}
       SYSTEMCTL_BIN=${escapeShellArg "${pkgs.systemd}/bin/systemctl"}
@@ -262,8 +322,96 @@ let
           && !(lib.elem ".." (lib.splitString "/" instance.runner.relativePath));
         message = "${name}: runner.relativePath must be a safe relative path without '..' segments";
       }
+      {
+        assertion =
+          !instance.console.enable
+          || (
+            builtins.match "^/[A-Za-z0-9._+@/-]+\\.tmux$" instance.console.socketPath != null
+            && !(lib.elem ".." (lib.splitString "/" instance.console.socketPath))
+          );
+        message = "${name}: console.socketPath must be an absolute .tmux socket path";
+      }
+      {
+        assertion =
+          !instance.console.enable
+          || builtins.match "^[A-Za-z0-9._+-]+$" instance.console.sessionName != null;
+        message = "${name}: console.sessionName must be tmux-safe";
+      }
     ]) instances
   );
+
+  carrierAssertions = lib.flatten (
+    mapAttrsToList (controlName: control: [
+      {
+        assertion = builtins.match "^[A-Za-z0-9_.@-]+$" controlName != null;
+        message = "carrier control name '${controlName}' is not systemd-unit safe";
+      }
+      {
+        assertion = builtins.match "^[A-Za-z0-9_.:-]+$" control.interface != null;
+        message = "carrier control '${controlName}' has an unsafe interface name";
+      }
+      {
+        assertion =
+          control.instances != [ ]
+          && lib.all (instanceName: builtins.hasAttr instanceName instances) control.instances;
+        message = "carrier control '${controlName}' must reference one or more enabled VM instances";
+      }
+      {
+        assertion = lib.all (
+          instanceName:
+          !(builtins.hasAttr instanceName instances)
+          || !(builtins.getAttr instanceName instances).activation.startOnBoot
+        ) control.instances;
+        message = "carrier-controlled instances must not also set activation.startOnBoot";
+      }
+    ]) cfg.carrierControls
+  );
+
+  vmServices = mapAttrs' (
+    name: instance:
+    nameValuePair "${name}-vm" {
+      description = instance.description;
+      wantedBy = optional instance.activation.startOnBoot "multi-user.target";
+      after = [ "network.target" ];
+      restartIfChanged = false;
+      path = instance.healthCheck.packages;
+      serviceConfig = {
+        Type = "simple";
+        User = "root";
+        ExecStartPre = "${manager}/bin/nixos-shell-vm-manager prepare-start ${instanceConfigs.${name}}";
+        ExecStart = "${manager}/bin/nixos-shell-vm-manager supervise ${instanceConfigs.${name}}";
+        ExecStop = "${manager}/bin/nixos-shell-vm-manager stop ${instanceConfigs.${name}} $MAINPID";
+        Restart = "no";
+        KillMode = "mixed";
+        TimeoutStopSec = "${toString (instance.runner.stopGraceSeconds + 10)}s";
+      };
+    }
+  ) instances;
+
+  carrierServices = mapAttrs' (
+    controlName: control:
+    nameValuePair "nixos-shell-${controlName}" {
+      description = control.description;
+      wantedBy = [ "multi-user.target" ];
+      after = [ "sys-subsystem-net-devices-${control.interface}.device" ];
+      wants = [ "sys-subsystem-net-devices-${control.interface}.device" ];
+      environment = {
+        INTERFACE = control.interface;
+        VM_UNITS_JSON = builtins.toJSON (
+          map (instanceName: "${instanceName}-vm.service") control.instances
+        );
+        POLL_INTERVAL_SECONDS = toString control.pollIntervalSeconds;
+        STATE_FILE = "/run/nixos-shell-${controlName}.state";
+        DRY_RUN = bool control.dryRun;
+      };
+      serviceConfig = {
+        Type = "simple";
+        ExecStart = lib.getExe carrierWatcher;
+        Restart = "always";
+        RestartSec = "5s";
+      };
+    }
+  ) cfg.carrierControls;
 in
 {
   options.services.nixosShellVmManager = {
@@ -272,6 +420,12 @@ in
     instances = mkOption {
       type = types.attrsOf (types.submodule instanceModule);
       default = { };
+    };
+
+    carrierControls = mkOption {
+      type = types.attrsOf (types.submodule carrierControlModule);
+      default = { };
+      description = "Dynamic host-interface carrier policies for managed VM groups.";
     };
 
     maxConcurrentBuilds = mkOption {
@@ -321,12 +475,18 @@ in
         assertion = cfg.runtimeDirectory != cfg.persistentDirectory;
         message = "runtimeDirectory and persistentDirectory must be independent";
       }
+      {
+        assertion = builtins.length consoleSockets == builtins.length (lib.unique consoleSockets);
+        message = "enabled VM consoles must use unique socket paths";
+      }
     ]
-    ++ instanceAssertions;
+    ++ instanceAssertions
+    ++ carrierAssertions;
 
     environment.systemPackages = [
       manager
       operatorPackage
+      pkgs.tmux
     ];
 
     environment.etc = mapAttrs' (
@@ -350,28 +510,10 @@ in
       '') (builtins.attrNames instances);
     };
 
-    systemd.services = mapAttrs' (
-      name: instance:
-      nameValuePair "${name}-vm" {
-        description = instance.description;
-        wantedBy = optional instance.activation.startOnBoot "multi-user.target";
-        after = [ "network.target" ];
-        restartIfChanged = false;
-        path = instance.healthCheck.packages;
-        serviceConfig = {
-          Type = "simple";
-          User = "root";
-          ExecStartPre = "${manager}/bin/nixos-shell-vm-manager prepare-start ${instanceConfigs.${name}}";
-          ExecStart = "${manager}/bin/nixos-shell-vm-manager supervise ${instanceConfigs.${name}}";
-          ExecStop = "${manager}/bin/nixos-shell-vm-manager stop ${instanceConfigs.${name}} $MAINPID";
-          Restart = "no";
-          KillMode = "mixed";
-          TimeoutStopSec = "${toString (instance.runner.stopGraceSeconds + 10)}s";
-        };
-      }
-    ) instances;
+    systemd.services = vmServices // carrierServices;
 
     system.build.nixosShellVmManager = manager;
     system.build.nixosShellVmManagerOperatorCommands = operatorPackage;
+    system.build.nixosShellVmManagerCarrierWatcher = carrierWatcher;
   };
 }

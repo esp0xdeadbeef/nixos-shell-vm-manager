@@ -20,6 +20,7 @@ Scope: software interfaces and state transitions
 | FS-110-HDS-010-SDS-010 | FS-110-HDS-010 | Lifecycle and construction locks |
 | FS-120-HDS-010-SDS-010 | FS-120-HDS-010 | NixOS module and generated instance configuration |
 | FS-140-HDS-010-SDS-010 | FS-140-HDS-010 | Layered verification entrypoints |
+| FS-150-HDS-010-SDS-010 | FS-150-HDS-010 | Stable tmux console adapter |
 
 ## State Model
 
@@ -29,10 +30,11 @@ The slots are `current`, `candidate`, `previous`, and `failed`; `phase` is one
 of `idle`, `activating`, `running`, `rolling-back`, or
 `operator-intervention`. Slot images are independently retained as Nix GC roots.
 
-The public `<vm>-vm.service` runs a foreground supervisor and the selected image
-runner as its child. Candidate builds never run in that service. A natural child
-exit is a guest shutdown; a supervisor stop is an explicit/host stop and cannot
-enter guest recovery.
+The public `<vm>-vm.service` runs a foreground supervisor. It starts and
+observes the exact selected image runner through a host-local terminal
+multiplexer. Candidate builds never run in that service. A natural runner exit
+is a guest shutdown; a supervisor stop is an explicit/host stop and cannot enter
+guest recovery.
 
 ## Transaction
 

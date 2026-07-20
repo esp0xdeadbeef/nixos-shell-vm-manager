@@ -20,5 +20,7 @@ cleanup() {
 trap cleanup TERM INT
 
 while true; do
-  sleep 0.1
+  if IFS= read -r -t 0.1 console_input; then
+    printf '%s\n' "$console_input" >"$observation_dir/console-input"
+  fi
 done

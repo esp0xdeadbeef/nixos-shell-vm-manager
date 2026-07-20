@@ -29,6 +29,7 @@ does not prescribe shell functions, Nix module internals, or test results.
 | FS-120-HDS-010 | FS-120 | Consumer-flake integration surface |
 | FS-130-HDS-010 | FS-130 | Root operator command environment |
 | FS-140-HDS-010 | FS-140 | Construction, integration, and acceptance environments |
+| FS-150-HDS-010 | FS-150 | Stable host-local interactive terminal endpoint |
 
 The corresponding controlled fullspec is named
 `GAMP/HDS/<full-HDS-ID>.md`.
@@ -44,6 +45,8 @@ Host-controlled state is divided into `/var/lib` image metadata and optional
 persistent guest state, `/var/cache` replaceable runtime disks, `/run` session
 authority and locks, and Nix GC roots for admitted immutable images. Every base
 directory remains configurable. No `/persist` path is required by the manager.
+The attachable VM terminal is a transient host-local `/run` endpoint and does
+not cross the guest network boundary.
 
 ## Boundary
 

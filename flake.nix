@@ -65,6 +65,10 @@
                   healthCheck.command = "test -e /run/test-vm/healthy";
                   runner.relativePath = "bin/run-compatible-vm";
                 };
+                carrierControls.test-carrier = {
+                  interface = "eth0";
+                  instances = [ "test-vm" ];
+                };
               };
             }
           ];
@@ -151,12 +155,104 @@
               }
             ];
           };
+          invalidCarrierTarget = lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                system.stateVersion = "26.05";
+                services.nixosShellVmManager = {
+                  enable = true;
+                  instances.invalid = {
+                    image = fakeImage pkgs "invalid" "baseline";
+                    healthCheck.command = "true";
+                  };
+                  carrierControls.invalid = {
+                    interface = "eth0";
+                    instances = [ "unknown" ];
+                  };
+                };
+              }
+            ];
+          };
+          invalidCarrierStartPolicy = lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                system.stateVersion = "26.05";
+                services.nixosShellVmManager = {
+                  enable = true;
+                  instances.invalid = {
+                    image = fakeImage pkgs "invalid" "baseline";
+                    healthCheck.command = "true";
+                    activation.startOnBoot = true;
+                  };
+                  carrierControls.invalid = {
+                    interface = "eth0";
+                    instances = [ "invalid" ];
+                  };
+                };
+              }
+            ];
+          };
+          invalidConsolePath = lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                system.stateVersion = "26.05";
+                services.nixosShellVmManager = {
+                  enable = true;
+                  instances.invalid = {
+                    image = fakeImage pkgs "invalid" "baseline";
+                    healthCheck.command = "true";
+                    console.socketPath = "relative/invalid.tmux";
+                  };
+                };
+              }
+            ];
+          };
+          duplicateConsolePath = lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                system.stateVersion = "26.05";
+                services.nixosShellVmManager = {
+                  enable = true;
+                  instances.first = {
+                    image = fakeImage pkgs "first" "baseline";
+                    healthCheck.command = "true";
+                    console.socketPath = "/run/nixos-shell/shared.tmux";
+                  };
+                  instances.second = {
+                    image = fakeImage pkgs "second" "baseline";
+                    healthCheck.command = "true";
+                    console.socketPath = "/run/nixos-shell/shared.tmux";
+                  };
+                };
+              }
+            ];
+          };
           contradictionResult = builtins.tryEval (
             builtins.deepSeq invalidContradiction.config.system.build.toplevel true
           );
           jitterResult = builtins.tryEval (builtins.deepSeq invalidJitter.config.system.build.toplevel true);
           runnerPathResult = builtins.tryEval (
             builtins.deepSeq invalidRunnerPath.config.system.build.toplevel true
+          );
+          carrierTargetResult = builtins.tryEval (
+            builtins.deepSeq invalidCarrierTarget.config.system.build.toplevel true
+          );
+          carrierStartPolicyResult = builtins.tryEval (
+            builtins.deepSeq invalidCarrierStartPolicy.config.system.build.toplevel true
+          );
+          consolePathResult = builtins.tryEval (
+            builtins.deepSeq invalidConsolePath.config.system.build.toplevel true
+          );
+          duplicateConsolePathResult = builtins.tryEval (
+            builtins.deepSeq duplicateConsolePath.config.system.build.toplevel true
           );
         in
         {
@@ -166,10 +262,21 @@
             assert
               evaluation.config.services.nixosShellVmManager.instances.test-vm.runner.relativePath
               == "bin/run-compatible-vm";
+            assert evaluation.config.services.nixosShellVmManager.instances.test-vm.console.enable;
+            assert
+              evaluation.config.services.nixosShellVmManager.instances.test-vm.console.socketPath
+              == "/run/nixos-shell/test-vm.tmux";
+            assert
+              evaluation.config.systemd.services.nixos-shell-test-carrier.environment.VM_UNITS_JSON
+              == ''["test-vm-vm.service"]'';
             assert evaluation.config.system.extraDependencies != [ ];
             assert !contradictionResult.success;
             assert !jitterResult.success;
             assert !runnerPathResult.success;
+            assert !carrierTargetResult.success;
+            assert !carrierStartPolicyResult.success;
+            assert !consolePathResult.success;
+            assert !duplicateConsolePathResult.success;
             pkgs.runCommand "nixos-shell-vm-manager-module-evaluation" { } ''
               touch "$out"
             '';

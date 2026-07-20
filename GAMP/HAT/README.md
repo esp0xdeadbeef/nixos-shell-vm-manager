@@ -10,6 +10,10 @@ The stakeholder authorized bounded live-host testing on non-production `s-tau`.
 `s-sigma`, `l-esp`, and SAT were outside this execution scope. No deployment or
 remote validation was performed on `l-esp`.
 
+FS-150 was added after the release exercised by this HAT. Its offline console
+contract has construction and integration coverage, but no live-host verdict is
+claimed here. A new HAT requires separate authorization.
+
 ## Configuration Items
 
 | Item | Accepted value |

@@ -32,6 +32,12 @@ All artifacts required to start a baseline VM shall already be present on the
 host after a successful host build. Starting a previously prepared VM shall not
 require internet access, dependency resolution, or image construction.
 
+An operator shall be able to attach an interactive terminal to each running VM
+through a stable host-local endpoint. Console access shall not depend on guest
+network connectivity. The endpoint shall remain the same when the manager
+starts another image during explicit start, rollout, guest-shutdown recovery,
+or rollback.
+
 Operators shall also be able to prepare a candidate from an explicitly selected
 local development source. The local source and its dependency pins shall be
 captured as an immutable build input. Later changes to that source shall not
@@ -78,8 +84,9 @@ the internal layout of one host-configuration repository.
 
 Construction and integration tests shall provide current evidence for image
 selection, build isolation, offline startup, explicit-stop preservation,
-health-gated promotion, and rollback behavior. Live host acceptance and final
-system acceptance require separate stakeholder authorization.
+health-gated promotion, rollback behavior, and offline interactive console
+access. Live host acceptance and final system acceptance require separate
+stakeholder authorization.
 
 ## Later Specifications
 

@@ -76,6 +76,18 @@ repository URL or knowledge of the consumer's layout:
           maxSeconds = 4;
         };
       };
+
+      # Enabled by default. These are the default values:
+      console = {
+        enable = true;
+        socketPath = "/run/nixos-shell/my-vm.tmux";
+        sessionName = "vm";
+      };
+    };
+
+    carrierControls.uplink-vms = {
+      interface = "eno1";
+      instances = [ "my-vm" ];
     };
   };
 }
@@ -102,11 +114,13 @@ The flake exports `packages.<system>.qga-systemd-health`, which performs a
 guest-agent ping and then executes a caller-selected command inside that exact
 guest. Promotion follows the guest command's exit status.
 
-The flake also exports `packages.<system>.carrier-watcher`. Consumers provide
-an interface, a JSON list of VM units, and their own systemd policy. A carrier
-transition then uses ordinary explicit `systemctl start` or `stop` operations,
-so the manager's configured activation and stop-authority rules remain the only
-VM lifecycle path.
+The module's `carrierControls` option starts selected instances on carrier-up
+and explicitly stops them on carrier-down. Carrier-controlled instances may not
+also set `activation.startOnBoot`. The flake additionally exports the underlying
+`packages.<system>.carrier-watcher` for consumers that need a custom systemd
+adapter. Both paths use ordinary `systemctl start` and `stop` operations, so the
+manager's activation and stop-authority rules remain the only VM lifecycle
+path.
 
 `runner.relativePath` defaults to `bin/run-<instance-name>-vm`. It may be set to
 another safe relative path when a flake configuration intentionally retains a
@@ -152,6 +166,22 @@ wait the configured jitter and roll out a pending candidate, or restart current
 according to that VM's policy. Stopping the systemd service is a separate event:
 the stop marker is written before the runner is terminated and guest recovery
 is not entered.
+
+## Offline console
+
+Every instance exposes its runner console through a stable host-local tmux
+socket by default. It does not use guest networking, so the console remains
+attachable when the guest has no network access:
+
+```console
+tmux -S /run/nixos-shell/my-vm.tmux attach -t vm
+```
+
+The same socket and session name are recreated for explicit starts, candidate
+rollouts, guest-shutdown restarts, and rollback. They remain stable even when
+the immutable image path changes. `console.socketPath` and
+`console.sessionName` are configurable per VM, and `console.enable = false`
+opts out. Stopping the VM service removes its live console endpoint.
 
 ## Operator commands
 
