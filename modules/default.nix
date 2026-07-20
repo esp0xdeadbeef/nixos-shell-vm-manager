@@ -446,7 +446,7 @@ let
         );
         POLL_INTERVAL_SECONDS = toString control.pollIntervalSeconds;
         STATE_FILE = "/run/nixos-shell-${controlName}.state";
-        DRY_RUN = bool control.dryRun;
+        DRY_RUN = if control.dryRun then "true" else "false";
       };
       serviceConfig = {
         Type = "simple";

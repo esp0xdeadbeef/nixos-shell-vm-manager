@@ -69,6 +69,11 @@
                   interface = "eth0";
                   instances = [ "test-vm" ];
                 };
+                carrierControls.test-carrier-dry = {
+                  interface = "eth1";
+                  instances = [ "test-vm" ];
+                  dryRun = true;
+                };
               };
             }
           ];
@@ -290,6 +295,9 @@
             assert
               evaluation.config.systemd.services.nixos-shell-test-carrier.environment.VM_UNITS_JSON
               == ''["test-vm-vm.service"]'';
+            assert evaluation.config.systemd.services.nixos-shell-test-carrier.environment.DRY_RUN == "false";
+            assert
+              evaluation.config.systemd.services.nixos-shell-test-carrier-dry.environment.DRY_RUN == "true";
             assert evaluation.config.system.extraDependencies != [ ];
             assert !contradictionResult.success;
             assert !jitterResult.success;
