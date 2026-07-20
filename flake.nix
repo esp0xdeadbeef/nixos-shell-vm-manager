@@ -13,6 +13,30 @@
       ];
       forAllSystems = lib.genAttrs supportedSystems;
 
+      carrierWatcherFor =
+        pkgs:
+        pkgs.writeShellApplication {
+          name = "nixos-shell-vm-carrier-watcher";
+          runtimeInputs = [
+            pkgs.coreutils
+            pkgs.jq
+            pkgs.systemd
+          ];
+          text = builtins.readFile ./scripts/carrier-watcher.sh;
+        };
+
+      qgaSystemdHealthFor =
+        pkgs:
+        pkgs.writeShellApplication {
+          name = "nixos-shell-vm-qga-systemd-health";
+          runtimeInputs = [
+            pkgs.coreutils
+            pkgs.jq
+            pkgs.socat
+          ];
+          text = builtins.readFile ./scripts/qga-systemd-health.sh;
+        };
+
       fakeImage =
         pkgs: name: label:
         pkgs.runCommand "${name}-${label}-image" { } ''
@@ -53,6 +77,17 @@
         default = import ./modules;
         nixos-shell-vm-manager = self.nixosModules.default;
       };
+
+      packages = forAllSystems (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+        in
+        {
+          "carrier-watcher" = carrierWatcherFor pkgs;
+          "qga-systemd-health" = qgaSystemdHealthFor pkgs;
+        }
+      );
 
       checks = forAllSystems (
         system:
@@ -145,7 +180,14 @@
                 nativeBuildInputs = [ pkgs.shellcheck ];
               }
               ''
-                shellcheck ${./scripts/nixos-shell-vm-manager.sh} ${./tests/fake-runner.sh} ${./tests/test-manager.sh}
+                shellcheck \
+                  ${./scripts/carrier-watcher.sh} \
+                  ${./scripts/nixos-shell-vm-manager.sh} \
+                  ${./scripts/qga-systemd-health.sh} \
+                  ${./tests/fake-runner.sh} \
+                  ${./tests/test-carrier-watcher.sh} \
+                  ${./tests/test-manager.sh} \
+                  ${./tests/test-qga-systemd-health.sh}
                 touch "$out"
               '';
 
@@ -163,6 +205,38 @@
               }
               ''
                 bash ${./tests/test-manager.sh} ${./scripts/nixos-shell-vm-manager.sh} ${./tests/fake-runner.sh}
+                touch "$out"
+              '';
+
+          carrier-watcher-tests =
+            pkgs.runCommand "nixos-shell-vm-manager-carrier-watcher-tests"
+              {
+                nativeBuildInputs = with pkgs; [
+                  bash
+                  coreutils
+                  gnugrep
+                ];
+              }
+              ''
+                bash ${./tests/test-carrier-watcher.sh} ${lib.getExe self.packages.${system}."carrier-watcher"}
+                touch "$out"
+              '';
+
+          qga-systemd-health-tests =
+            pkgs.runCommand "nixos-shell-vm-manager-qga-systemd-health-tests"
+              {
+                nativeBuildInputs = with pkgs; [
+                  bash
+                  coreutils
+                  gnugrep
+                  jq
+                  socat
+                ];
+              }
+              ''
+                bash ${./tests/test-qga-systemd-health.sh} ${
+                  lib.getExe self.packages.${system}."qga-systemd-health"
+                }
                 touch "$out"
               '';
         }

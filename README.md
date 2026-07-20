@@ -98,6 +98,15 @@ healthCheck.command = ''
 For consumers that use a QEMU Guest Agent healthcheck, `qga.sock` is reserved
 inside the per-VM control directory. The manager removes that transient socket
 before launch and after runner exit so a stale endpoint cannot block recovery.
+The flake exports `packages.<system>.qga-systemd-health`, which performs a
+guest-agent ping and then executes a caller-selected command inside that exact
+guest. Promotion follows the guest command's exit status.
+
+The flake also exports `packages.<system>.carrier-watcher`. Consumers provide
+an interface, a JSON list of VM units, and their own systemd policy. A carrier
+transition then uses ordinary explicit `systemctl start` or `stop` operations,
+so the manager's configured activation and stop-authority rules remain the only
+VM lifecycle path.
 
 `runner.relativePath` defaults to `bin/run-<instance-name>-vm`. It may be set to
 another safe relative path when a flake configuration intentionally retains a
