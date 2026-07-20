@@ -2,6 +2,7 @@
   config,
   lib,
   pkgs,
+  utils,
   ...
 }:
 let
@@ -241,6 +242,11 @@ let
         type = types.listOf types.str;
         description = "Managed VM names started on carrier-up and stopped on carrier-down.";
       };
+      requiredInterfaces = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        description = "Additional host interfaces that must exist before carrier policy starts.";
+      };
       pollIntervalSeconds = mkOption {
         type = types.ints.positive;
         default = 5;
@@ -395,6 +401,12 @@ let
         message = "carrier control '${controlName}' has an unsafe interface name";
       }
       {
+        assertion = lib.all (
+          interface: builtins.match "^[A-Za-z0-9_.:-]+$" interface != null
+        ) control.requiredInterfaces;
+        message = "carrier control '${controlName}' has an unsafe required interface name";
+      }
+      {
         assertion =
           control.instances != [ ]
           && lib.all (instanceName: builtins.hasAttr instanceName instances) control.instances;
@@ -434,16 +446,22 @@ let
 
   carrierServices = mapAttrs' (
     controlName: control:
+    let
+      deviceUnits = map (
+        interface: "sys-subsystem-net-devices-${utils.escapeSystemdPath interface}.device"
+      ) ([ control.interface ] ++ control.requiredInterfaces);
+    in
     nameValuePair "nixos-shell-${controlName}" {
       description = control.description;
       wantedBy = [ "multi-user.target" ];
-      after = [ "sys-subsystem-net-devices-${control.interface}.device" ];
-      wants = [ "sys-subsystem-net-devices-${control.interface}.device" ];
+      after = deviceUnits;
+      wants = deviceUnits;
       environment = {
         INTERFACE = control.interface;
-        VM_UNITS_JSON = builtins.toJSON (
-          map (instanceName: "${instanceName}-vm.service") control.instances
+        VM_CONFIGS_JSON = builtins.toJSON (
+          map (instanceName: instanceConfigs.${instanceName}) control.instances
         );
+        MANAGER_BIN = lib.getExe manager;
         POLL_INTERVAL_SECONDS = toString control.pollIntervalSeconds;
         STATE_FILE = "/run/nixos-shell-${controlName}.state";
         DRY_RUN = if control.dryRun then "true" else "false";

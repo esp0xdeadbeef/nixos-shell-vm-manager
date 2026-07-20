@@ -32,6 +32,13 @@ All artifacts required to start a baseline VM shall already be present on the
 host after a successful host build. Starting a previously prepared VM shall not
 require internet access, dependency resolution, or image construction.
 
+A host whose external connectivity is supplied by one of its managed VMs shall
+be able to cold-boot that VM from local artifacts before that connectivity
+exists. Host-local interfaces and bridges required by an automatic activation
+policy shall be declared and available before the policy starts the VM.
+Network-dependent maintenance, including dependency refresh and host upgrade,
+shall not gate this offline bootstrap path.
+
 A VM may independently opt into refreshing the dependency pins of its
 declaratively approved VM flake before an authorized normal start. Without this
 policy, the VM shall start from the image built with the host-approved pins.
@@ -64,6 +71,9 @@ Candidate activation may occur following a guest-initiated shutdown or an
 explicit operator rollout request. Automated image preparation or activation
 shall not override an explicit operator stop. Only a later explicit start,
 explicit rollout, or configured host-boot policy may authorize another start.
+A configured carrier policy may automatically stop a VM while carrier is down
+and restore it when carrier returns, but shall not treat that automatic stop as
+an operator stop or override a later explicit operator stop.
 
 Before a candidate is accepted, the manager shall verify both that its virtual
 machine process remains operational and that the guest satisfies VM-specific

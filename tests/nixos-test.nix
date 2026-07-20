@@ -130,6 +130,19 @@ pkgs.testers.runNixOSTest {
     machine.succeed("tmux -S /run/nixos-shell/test-vm.tmux send-keys -t vm offline-console-probe Enter")
     machine.wait_until_succeeds("test $(cat /run/fake-vm/console-input) = offline-console-probe")
 
+    # The carrier adapter has automatic stop authority distinct from an
+    # explicit operator stop. Carrier-up may reverse only its own stop reason.
+    machine.succeed("nixos-shell-vm-manager carrier-stop /etc/nixos-shell-vm-manager/instances/test-vm.conf")
+    machine.wait_until_succeeds("! systemctl is-active --quiet test-vm-vm.service")
+    state = json.loads(machine.succeed("vm-status test-vm"))
+    assert state["authority"]["explicitlyStopped"] is False
+    assert state["authority"]["stopReason"] == "carrier-down"
+    machine.succeed("nixos-shell-vm-manager carrier-start /etc/nixos-shell-vm-manager/instances/test-vm.conf")
+    machine.wait_until_succeeds("systemctl is-active --quiet test-vm-vm.service && test $(cat /run/fake-vm/active) = baseline")
+    state = json.loads(machine.succeed("vm-status test-vm"))
+    assert state["authority"]["stopReason"] is None
+    machine.succeed("tmux -S /run/nixos-shell/test-vm.tmux has-session -t vm")
+
     # Explicit stop is retained across later candidate admission.
     machine.succeed("mkdir -p /var/lib/nixos-shell-vm-manager/persistent/test-vm")
     machine.succeed("echo durable > /var/lib/nixos-shell-vm-manager/persistent/test-vm/marker")
@@ -139,6 +152,11 @@ pkgs.testers.runNixOSTest {
     machine.succeed("test $(jq -r .phase /var/lib/nixos-shell-vm-manager/test-vm/state.json) = idle")
     machine.succeed("nixos-shell-vm-manager register /etc/nixos-shell-vm-manager/instances/test-vm.conf ${good} local-working-tree integration-good")
     machine.fail("systemctl is-active --quiet test-vm-vm.service")
+    machine.fail("nixos-shell-vm-manager carrier-start /etc/nixos-shell-vm-manager/instances/test-vm.conf")
+    machine.fail("systemctl is-active --quiet test-vm-vm.service")
+    state = json.loads(machine.succeed("vm-status test-vm"))
+    assert state["authority"]["explicitlyStopped"] is True
+    assert state["authority"]["stopReason"] == "explicit-stop"
 
     # Explicit rollout authorizes start and promotion.
     machine.succeed("vm-rollout test-vm")

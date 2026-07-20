@@ -68,6 +68,10 @@
                 carrierControls.test-carrier = {
                   interface = "eth0";
                   instances = [ "test-vm" ];
+                  requiredInterfaces = [
+                    "vmbr1"
+                    "vmbr4"
+                  ];
                 };
                 carrierControls.test-carrier-dry = {
                   interface = "eth1";
@@ -293,8 +297,22 @@
               evaluation.config.services.nixosShellVmManager.instances.test-vm.console.socketPath
               == "/run/nixos-shell/test-vm.tmux";
             assert
-              evaluation.config.systemd.services.nixos-shell-test-carrier.environment.VM_UNITS_JSON
-              == ''["test-vm-vm.service"]'';
+              builtins.length (
+                builtins.fromJSON (
+                  builtins.unsafeDiscardStringContext evaluation.config.systemd.services.nixos-shell-test-carrier.environment.VM_CONFIGS_JSON
+                )
+              ) == 1;
+            assert lib.hasSuffix "nixos-shell-vm-manager-test-vm.conf" (
+              builtins.head (
+                builtins.fromJSON (
+                  builtins.unsafeDiscardStringContext evaluation.config.systemd.services.nixos-shell-test-carrier.environment.VM_CONFIGS_JSON
+                )
+              )
+            );
+            assert lib.elem "sys-subsystem-net-devices-vmbr1.device"
+              evaluation.config.systemd.services.nixos-shell-test-carrier.after;
+            assert lib.elem "sys-subsystem-net-devices-vmbr4.device"
+              evaluation.config.systemd.services.nixos-shell-test-carrier.after;
             assert evaluation.config.systemd.services.nixos-shell-test-carrier.environment.DRY_RUN == "false";
             assert
               evaluation.config.systemd.services.nixos-shell-test-carrier-dry.environment.DRY_RUN == "true";

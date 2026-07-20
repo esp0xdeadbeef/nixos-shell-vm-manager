@@ -22,6 +22,8 @@ CONFIG arguments are generated .conf paths, not VM names:
 internal usage:
   nixos-shell-vm-manager register CONFIG IMAGE SOURCE_KIND SOURCE_ID [LOCK_ID]
   nixos-shell-vm-manager prepare-start CONFIG
+  nixos-shell-vm-manager carrier-start CONFIG
+  nixos-shell-vm-manager carrier-stop CONFIG
   nixos-shell-vm-manager construct-pin-refresh CONFIG
   nixos-shell-vm-manager attach CONFIG
   nixos-shell-vm-manager stop CONFIG [SUPERVISOR_PID]
@@ -256,6 +258,12 @@ current_epoch_unlocked() {
   printf '%s\n' "$epoch"
 }
 
+stop_reason_unlocked() {
+  if [[ -r "$CONTROL_DIR/stopped" ]]; then
+    cat "$CONTROL_DIR/stopped"
+  fi
+}
+
 authorize_start() {
   local reason=$1
   intent_lock
@@ -263,7 +271,7 @@ authorize_start() {
   epoch=$(current_epoch_unlocked)
   epoch=$((epoch + 1))
   atomic_text "$CONTROL_DIR/epoch" "$epoch"
-  rm -f -- "$CONTROL_DIR/stopped"
+  rm -f -- "$CONTROL_DIR/stopped" "$CONTROL_DIR/automatic-stop"
   atomic_text "$CONTROL_DIR/start-reason" "$reason"
   intent_unlock
   printf '%s\n' "$epoch"
@@ -271,14 +279,21 @@ authorize_start() {
 
 mark_stopped() {
   intent_lock
-  local epoch
-  if [[ ! -e "$CONTROL_DIR/stopped" ]]; then
-    epoch=$(current_epoch_unlocked)
+  local epoch stop_reason automatic_epoch=
+  stop_reason=$(stop_reason_unlocked)
+  epoch=$(current_epoch_unlocked)
+  if [[ -r "$CONTROL_DIR/automatic-stop" ]]; then
+    read -r automatic_epoch <"$CONTROL_DIR/automatic-stop" || automatic_epoch=
+  fi
+  if [[ "$stop_reason" == carrier-down && "$automatic_epoch" == "$epoch" ]]; then
+    rm -f -- "$CONTROL_DIR/automatic-stop"
+  elif [[ "$stop_reason" != explicit-stop ]]; then
     epoch=$((epoch + 1))
     atomic_text "$CONTROL_DIR/epoch" "$epoch"
     atomic_text "$CONTROL_DIR/stopped" "explicit-stop"
+    rm -f -- "$CONTROL_DIR/automatic-stop"
   fi
-  rm -f -- "$CONTROL_DIR/preauthorized" "$CONTROL_DIR/force-candidate"
+  rm -f -- "$CONTROL_DIR/force-candidate"
   intent_unlock
 }
 
@@ -287,11 +302,24 @@ prepare_start() {
   load_config "$config"
   require_mutation_authority
   ensure_directories
-  if [[ -e "$CONTROL_DIR/preauthorized" && ! -e "$CONTROL_DIR/stopped" ]]; then
+  intent_lock
+  if [[ -e "$CONTROL_DIR/preauthorized" ]]; then
+    local expected_epoch actual_epoch
+    read -r expected_epoch <"$CONTROL_DIR/preauthorized" || expected_epoch=
     rm -f -- "$CONTROL_DIR/preauthorized"
-  else
-    authorize_start explicit-start >/dev/null
+    actual_epoch=$(current_epoch_unlocked)
+    if [[ ! "$expected_epoch" =~ ^[0-9]+$ ]] || \
+      [[ "$expected_epoch" != "$actual_epoch" ]] || \
+      [[ -e "$CONTROL_DIR/stopped" ]]; then
+      intent_unlock
+      printf '%s: automatic start blocked by stop authority\n' "$VM_NAME" >&2
+      return 75
+    fi
+    intent_unlock
+    return 0
   fi
+  intent_unlock
+  authorize_start explicit-start >/dev/null
 }
 
 stop_service() {
@@ -301,6 +329,89 @@ stop_service() {
   mark_stopped
   if [[ "$supervisor_pid" =~ ^[0-9]+$ ]] && kill -0 "$supervisor_pid" 2>/dev/null; then
     kill -TERM "$supervisor_pid" 2>/dev/null || true
+  fi
+}
+
+carrier_start() {
+  local config=$1
+  load_config "$config"
+  require_mutation_authority
+  ensure_directories
+
+  intent_lock
+  local stop_reason epoch
+  stop_reason=$(stop_reason_unlocked)
+  if [[ -n "$stop_reason" && "$stop_reason" != carrier-down ]]; then
+    intent_unlock
+    printf '%s: carrier-up start preserved %s authority\n' \
+      "$VM_NAME" "$stop_reason" >&2
+    return 75
+  fi
+  if [[ -z "$stop_reason" ]] && \
+    "$SYSTEMCTL_BIN" is-active --quiet "$SYSTEMD_UNIT"; then
+    intent_unlock
+    return 0
+  fi
+
+  epoch=$(current_epoch_unlocked)
+  epoch=$((epoch + 1))
+  atomic_text "$CONTROL_DIR/epoch" "$epoch"
+  rm -f -- "$CONTROL_DIR/stopped" "$CONTROL_DIR/automatic-stop"
+  atomic_text "$CONTROL_DIR/start-reason" carrier-up
+  atomic_text "$CONTROL_DIR/preauthorized" "$epoch"
+  intent_unlock
+
+  "$SYSTEMCTL_BIN" reset-failed "$SYSTEMD_UNIT" >/dev/null 2>&1 || true
+  if ! "$SYSTEMCTL_BIN" start "$SYSTEMD_UNIT"; then
+    intent_lock
+    local pending_epoch=
+    if [[ -r "$CONTROL_DIR/preauthorized" ]]; then
+      read -r pending_epoch <"$CONTROL_DIR/preauthorized" || pending_epoch=
+    fi
+    if [[ "$pending_epoch" == "$epoch" ]]; then
+      rm -f -- "$CONTROL_DIR/preauthorized"
+    fi
+    if [[ $(current_epoch_unlocked) == "$epoch" ]]; then
+      atomic_text "$CONTROL_DIR/stopped" carrier-down
+    fi
+    intent_unlock
+    return 1
+  fi
+}
+
+carrier_stop() {
+  local config=$1
+  load_config "$config"
+  require_mutation_authority
+  ensure_directories
+
+  intent_lock
+  local stop_reason epoch automatic_epoch=
+  stop_reason=$(stop_reason_unlocked)
+  if [[ -z "$stop_reason" ]]; then
+    epoch=$(current_epoch_unlocked)
+    epoch=$((epoch + 1))
+    atomic_text "$CONTROL_DIR/epoch" "$epoch"
+    atomic_text "$CONTROL_DIR/stopped" carrier-down
+    rm -f -- "$CONTROL_DIR/force-candidate"
+  fi
+  if [[ "$stop_reason" != explicit-stop ]]; then
+    automatic_epoch=$(current_epoch_unlocked)
+    atomic_text "$CONTROL_DIR/automatic-stop" "$automatic_epoch"
+  fi
+  intent_unlock
+
+  if ! "$SYSTEMCTL_BIN" kill --kill-whom=main --signal=USR2 "$SYSTEMD_UNIT" \
+    >/dev/null 2>&1; then
+    intent_lock
+    local pending_automatic_epoch=
+    if [[ -r "$CONTROL_DIR/automatic-stop" ]]; then
+      read -r pending_automatic_epoch <"$CONTROL_DIR/automatic-stop" || pending_automatic_epoch=
+    fi
+    if [[ -n "$automatic_epoch" && "$pending_automatic_epoch" == "$automatic_epoch" ]]; then
+      rm -f -- "$CONTROL_DIR/automatic-stop"
+    fi
+    intent_unlock
   fi
 }
 
@@ -467,7 +578,7 @@ select_image_unlocked() {
   candidate=$(slot_image_unlocked candidate)
   case "$event" in
     force-candidate) use_candidate=1 ;;
-    explicit-start) [[ "$USE_CANDIDATE_ON_EXPLICIT_START" == 1 ]] && use_candidate=1 ;;
+    explicit-start|carrier-up) [[ "$USE_CANDIDATE_ON_EXPLICIT_START" == 1 ]] && use_candidate=1 ;;
     guest-shutdown) [[ "$ROLLOUT_CANDIDATE_ON_GUEST_SHUTDOWN" == 1 ]] && use_candidate=1 ;;
     boot) use_candidate=0 ;;
     *) die "invalid supervisor event: $event" ;;
@@ -513,7 +624,7 @@ activate_event() {
   lock_lifecycle
   if [[ -e "$CONTROL_DIR/stopped" ]]; then
     unlock_lifecycle
-    printf '%s: start blocked by explicit-stop authority\n' "$VM_NAME" >&2
+    printf '%s: start blocked by stop authority\n' "$VM_NAME" >&2
     return 75
   fi
   if ! select_image_unlocked "$event"; then
@@ -603,8 +714,15 @@ supervise() {
       stop_child "$CHILD_PID"
     fi
   }
+  on_carrier_stop() {
+    stopping=1
+    if [[ ${CHILD_PID:-} =~ ^[0-9]+$ ]]; then
+      stop_child "$CHILD_PID"
+    fi
+  }
   trap on_term TERM INT
   trap on_rollout USR1
+  trap on_carrier_stop USR2
 
   event=explicit-start
   if [[ -r "$CONTROL_DIR/start-reason" ]]; then
@@ -700,7 +818,7 @@ acquire_build_token() {
 
 pin_refresh_event_is_eligible() {
   case "$1" in
-    boot|explicit-start|guest-shutdown) return 0 ;;
+    boot|explicit-start|carrier-up|guest-shutdown) return 0 ;;
     force-candidate) return 1 ;;
     *) die "invalid supervisor event: $1" ;;
   esac
@@ -786,9 +904,20 @@ request_rollout_with_epoch() {
   if "$SYSTEMCTL_BIN" is-active --quiet "$SYSTEMD_UNIT"; then
     "$SYSTEMCTL_BIN" kill --kill-whom=main --signal=USR1 "$SYSTEMD_UNIT"
   else
-    atomic_text "$CONTROL_DIR/preauthorized" "1"
+    atomic_text "$CONTROL_DIR/preauthorized" "$expected_epoch"
     "$SYSTEMCTL_BIN" reset-failed "$SYSTEMD_UNIT" >/dev/null 2>&1 || true
-    "$SYSTEMCTL_BIN" start "$SYSTEMD_UNIT"
+    if ! "$SYSTEMCTL_BIN" start "$SYSTEMD_UNIT"; then
+      intent_lock
+      local pending_epoch=
+      if [[ -r "$CONTROL_DIR/preauthorized" ]]; then
+        read -r pending_epoch <"$CONTROL_DIR/preauthorized" || pending_epoch=
+      fi
+      if [[ "$pending_epoch" == "$expected_epoch" ]]; then
+        rm -f -- "$CONTROL_DIR/preauthorized"
+      fi
+      intent_unlock
+      return 1
+    fi
   fi
 }
 
@@ -857,12 +986,17 @@ show_status() {
   load_config "$config"
   ensure_directories
   lock_lifecycle
-  local stopped=false epoch running_pid=
-  [[ -e "$CONTROL_DIR/stopped" ]] && stopped=true
+  local explicitly_stopped=false stop_reason='' epoch running_pid=''
+  stop_reason=$(stop_reason_unlocked)
+  [[ "$stop_reason" == explicit-stop ]] && explicitly_stopped=true
   epoch=$(current_epoch_unlocked)
   [[ -r "$CONTROL_DIR/runner.pid" ]] && read -r running_pid <"$CONTROL_DIR/runner.pid"
-  jq --argjson stopped "$stopped" --arg epoch "$epoch" --arg runnerPid "$running_pid" \
-    '. + {authority:{explicitlyStopped:$stopped,epoch:($epoch|tonumber)},runnerPid:(if $runnerPid == "" then null else ($runnerPid|tonumber) end)}' \
+  jq --argjson explicitlyStopped "$explicitly_stopped" \
+    --arg stopReason "$stop_reason" --arg epoch "$epoch" --arg runnerPid "$running_pid" \
+    '. + {authority:{explicitlyStopped:$explicitlyStopped,
+      stopReason:(if $stopReason == "" then null else $stopReason end),
+      epoch:($epoch|tonumber)},
+      runnerPid:(if $runnerPid == "" then null else ($runnerPid|tonumber) end)}' \
     "$STATE_DIR/state.json"
   unlock_lifecycle
 }
@@ -926,6 +1060,8 @@ case "$command_name" in
   help|-h|--help) [[ $# -eq 0 ]] || usage; usage 0 ;;
   register) [[ $# -ge 4 && $# -le 5 ]] || usage; register_image "$@" ;;
   prepare-start) [[ $# -eq 1 ]] || usage; prepare_start "$@" ;;
+  carrier-start) [[ $# -eq 1 ]] || usage; carrier_start "$@" ;;
+  carrier-stop) [[ $# -eq 1 ]] || usage; carrier_stop "$@" ;;
   construct-pin-refresh) [[ $# -eq 1 ]] || usage; construct_pin_refresh_candidate "$@" ;;
   attach) [[ $# -eq 1 ]] || usage; attach_console "$@" ;;
   stop) [[ $# -ge 1 && $# -le 2 ]] || usage; stop_service "$@" ;;

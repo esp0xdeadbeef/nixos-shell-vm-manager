@@ -68,7 +68,9 @@ Fullspec: `GAMP/FS/FS-070-per-vm-activation-variables.md`.
 Each VM shall independently configure boot start, guest-shutdown restart,
 candidate selection on guest shutdown and explicit start, and the bounded
 guest-shutdown jitter interval. It shall also independently opt into or out of
-best-effort pre-start pin refresh.
+best-effort pre-start pin refresh. Named host carrier policies shall declare the
+carrier interface, controlled VMs, required host-local interfaces, polling, and
+dry-run behavior without overriding explicit-stop authority.
 
 ### FS-075 Explicit-stop Precedence
 

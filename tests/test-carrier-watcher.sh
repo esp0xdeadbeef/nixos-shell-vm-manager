@@ -13,18 +13,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
-fake_systemctl="$test_root/systemctl"
-printf '#!%s\n' "${BASH:?}" >"$fake_systemctl"
-cat >>"$fake_systemctl" <<'EOF'
+fake_manager="$test_root/nixos-shell-vm-manager"
+printf '#!%s\n' "${BASH:?}" >"$fake_manager"
+cat >>"$fake_manager" <<'EOF'
 set -euo pipefail
-printf '%s\n' "$*" >>"$SYSTEMCTL_LOG"
+printf '%s\n' "$*" >>"$MANAGER_LOG"
 EOF
-chmod +x "$fake_systemctl"
+chmod +x "$fake_manager"
 
 carrier_file="$test_root/carrier"
 state_file="$test_root/state"
-systemctl_log="$test_root/systemctl.log"
-: >"$systemctl_log"
+manager_log="$test_root/manager.log"
+: >"$manager_log"
 printf '0\n' >"$carrier_file"
 
 (
@@ -36,41 +36,41 @@ printf '0\n' >"$carrier_file"
 transition_pid=$!
 
 INTERFACE=eno1 \
-VM_UNITS_JSON='["s-router-prod-vm.service"]' \
+VM_CONFIGS_JSON='["/etc/nixos-shell-vm-manager/instances/s-router-prod.conf"]' \
 POLL_INTERVAL_SECONDS=1 \
 STATE_FILE="$state_file" \
 DRY_RUN=false \
+MANAGER_BIN="$fake_manager" \
 CARRIER_FILE="$carrier_file" \
-SYSTEMCTL_BIN="$fake_systemctl" \
-SYSTEMCTL_LOG="$systemctl_log" \
+MANAGER_LOG="$manager_log" \
 MAX_ITERATIONS=8 \
   "$watcher" >"$test_root/watcher.log"
 wait "$transition_pid"
 transition_pid=
 
 cat >"$test_root/expected.log" <<'EOF'
-stop --no-block s-router-prod-vm.service
-start --no-block s-router-prod-vm.service
-stop --no-block s-router-prod-vm.service
+carrier-stop /etc/nixos-shell-vm-manager/instances/s-router-prod.conf
+carrier-start /etc/nixos-shell-vm-manager/instances/s-router-prod.conf
+carrier-stop /etc/nixos-shell-vm-manager/instances/s-router-prod.conf
 EOF
-cmp "$test_root/expected.log" "$systemctl_log"
+cmp "$test_root/expected.log" "$manager_log"
 [[ $(<"$state_file") == down ]]
 grep -Fx 'eno1 carrier is up; starting router VMs' "$test_root/watcher.log" >/dev/null
 grep -Fx 'eno1 carrier is down; stopping router VMs' "$test_root/watcher.log" >/dev/null
 
-: >"$systemctl_log"
+: >"$manager_log"
 INTERFACE=eno1 \
-VM_UNITS_JSON='["s-router-prod-vm.service"]' \
+VM_CONFIGS_JSON='["/etc/nixos-shell-vm-manager/instances/s-router-prod.conf"]' \
 POLL_INTERVAL_SECONDS=0 \
 STATE_FILE="$state_file" \
 DRY_RUN=true \
+MANAGER_BIN="$fake_manager" \
 CARRIER_FILE="$carrier_file" \
-SYSTEMCTL_BIN="$fake_systemctl" \
-SYSTEMCTL_LOG="$systemctl_log" \
+MANAGER_LOG="$manager_log" \
 MAX_ITERATIONS=1 \
   "$watcher" >"$test_root/dry-run.log"
-[[ ! -s $systemctl_log ]]
-grep -Fx 'dry-run: would run: systemctl stop --no-block s-router-prod-vm.service' \
+[[ ! -s $manager_log ]]
+grep -Fx "dry-run: would run: $fake_manager carrier-stop /etc/nixos-shell-vm-manager/instances/s-router-prod.conf" \
   "$test_root/dry-run.log" >/dev/null
 
 printf 'carrier watcher tests passed\n'

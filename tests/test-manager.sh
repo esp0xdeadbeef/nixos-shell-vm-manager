@@ -191,6 +191,30 @@ wait_for 'baseline promotion' "test \"\$(jq -r .current.image '$test_root/state/
 [[ $(cat "$observation/active") == baseline ]]
 [[ ! -e "$test_root/control/qga.sock" ]]
 
+# Carrier policy uses distinct automatic authority. Carrier-down blocks
+# recovery without masquerading as an operator stop, and carrier-up may clear
+# only that automatic reason.
+: >"$FAKE_SYSTEMCTL_LOG"
+epoch_before=$(cat "$test_root/control/epoch")
+bash "$manager" carrier-stop "$config"
+[[ $(cat "$test_root/control/stopped") == carrier-down ]]
+[[ $(jq -r '.authority.explicitlyStopped' <(bash "$manager" status "$config")) == false ]]
+[[ $(jq -r '.authority.stopReason' <(bash "$manager" status "$config")) == carrier-down ]]
+[[ $(cat "$test_root/control/epoch") -eq $((epoch_before + 1)) ]]
+grep -Fx 'kill --kill-whom=main --signal=USR2 test-vm-vm.service' "$FAKE_SYSTEMCTL_LOG" >/dev/null
+[[ -e "$test_root/control/automatic-stop" ]]
+bash "$manager" carrier-start "$config"
+[[ ! -e "$test_root/control/stopped" ]]
+[[ ! -e "$test_root/control/automatic-stop" ]]
+[[ -e "$test_root/control/preauthorized" ]]
+[[ $(cat "$test_root/control/preauthorized") -eq $((epoch_before + 2)) ]]
+[[ $(cat "$test_root/control/start-reason") == carrier-up ]]
+[[ $(cat "$test_root/control/epoch") -eq $((epoch_before + 2)) ]]
+grep -Fx 'start test-vm-vm.service' "$FAKE_SYSTEMCTL_LOG" >/dev/null
+bash "$manager" prepare-start "$config"
+[[ ! -e "$test_root/control/preauthorized" ]]
+: >"$FAKE_SYSTEMCTL_LOG"
+
 # Admission does not interrupt the running runner; explicit rollout promotes.
 bash "$manager" register "$config" "$good" local-working-tree local-good
 [[ $(cat "$observation/active") == baseline ]]
@@ -239,6 +263,7 @@ bash "$manager" stop "$config" "$supervisor_pid"
 wait "$supervisor_pid"
 supervisor_pid=
 [[ -e "$test_root/control/stopped" ]]
+[[ $(cat "$test_root/control/stopped") == explicit-stop ]]
 : >"$FAKE_ARCHIVE_RELEASE"
 update_status=0
 wait "$update_pid" || update_status=$?
@@ -250,6 +275,21 @@ grep -q -- '--no-write-lock-file' "$FAKE_NIX_LOG"
 [[ ! -e "$observation/active" ]]
 [[ $(cat "$test_root/persistent/marker") == persistent-data ]]
 [[ $(jq -r '.phase' "$test_root/state/state.json") == idle ]]
+
+# Automatic carrier-up never overrides the later explicit operator stop. A
+# preauthorization racing with that stop is rejected by ExecStartPre as well.
+: >"$FAKE_SYSTEMCTL_LOG"
+carrier_start_status=0
+bash "$manager" carrier-start "$config" || carrier_start_status=$?
+[[ $carrier_start_status -eq 75 ]]
+[[ $(cat "$test_root/control/stopped") == explicit-stop ]]
+[[ ! -s "$FAKE_SYSTEMCTL_LOG" ]]
+cat "$test_root/control/epoch" >"$test_root/control/preauthorized"
+prepare_status=0
+bash "$manager" prepare-start "$config" || prepare_status=$?
+[[ $prepare_status -eq 75 ]]
+[[ ! -e "$test_root/control/preauthorized" ]]
+[[ $(cat "$test_root/control/stopped") == explicit-stop ]]
 
 # FS-160-HDS-010-SDS-010-SMS-010: an enabled ordinary start updates only an
 # isolated copy, admits refreshed provenance, and promotes the complete output.

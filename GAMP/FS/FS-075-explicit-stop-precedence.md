@@ -23,6 +23,11 @@ configured boot-start policy may provide new authority at the next host boot.
 Host shutdown shall not be classified as guest-initiated shutdown and shall not
 trigger guest-recovery behavior.
 
+A configured carrier-down policy may record a distinct automatic stop reason
+and revoke its own earlier carrier-up authority. A later carrier-up transition
+may clear only that automatic stop reason. It shall not clear an explicit
+operator stop or otherwise provide authority after a later operator stop.
+
 ## Failure Conditions
 
 - Candidate construction or admission clears explicit-stop state.
@@ -31,6 +36,8 @@ trigger guest-recovery behavior.
 - Automatic recovery overrides a later explicit stop.
 - Host shutdown triggers guest-shutdown recovery.
 - Explicit-stop precedence can be disabled by per-VM configuration.
+- Carrier-up clears an explicit operator stop or a carrier-down transition is
+  reported as an explicit operator stop.
 
 ## Downstream Handoff
 

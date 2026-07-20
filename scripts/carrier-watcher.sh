@@ -2,13 +2,13 @@
 set -euo pipefail
 
 : "${INTERFACE:?}"
-: "${VM_UNITS_JSON:?}"
+: "${VM_CONFIGS_JSON:?}"
 : "${POLL_INTERVAL_SECONDS:?}"
 : "${STATE_FILE:?}"
 : "${DRY_RUN:?}"
+: "${MANAGER_BIN:?}"
 
 carrier_file=${CARRIER_FILE:-/sys/class/net/$INTERFACE/carrier}
-systemctl_bin=${SYSTEMCTL_BIN:-systemctl}
 max_iterations=${MAX_ITERATIONS:-0}
 
 [[ $POLL_INTERVAL_SECONDS =~ ^[0-9]+$ ]] || {
@@ -27,9 +27,9 @@ case "$DRY_RUN" in
     ;;
 esac
 
-mapfile -t vm_units < <(jq -er '.[] | strings' <<<"$VM_UNITS_JSON")
-(( ${#vm_units[@]} > 0 )) || {
-  printf 'carrier policy has no VM units\n' >&2
+mapfile -t vm_configs < <(jq -er '.[] | strings' <<<"$VM_CONFIGS_JSON")
+(( ${#vm_configs[@]} > 0 )) || {
+  printf 'carrier policy has no VM configurations\n' >&2
   exit 64
 }
 
@@ -45,23 +45,31 @@ carrier_state() {
 
 run_action() {
   local action=$1
-  if [[ $DRY_RUN == true ]]; then
-    printf 'dry-run: would run: systemctl %s --no-block' "$action"
-    printf ' %q' "${vm_units[@]}"
-    printf '\n'
-  else
-    "$systemctl_bin" "$action" --no-block "${vm_units[@]}"
-  fi
+  local config status
+  for config in "${vm_configs[@]}"; do
+    if [[ $DRY_RUN == true ]]; then
+      printf 'dry-run: would run: %q %q %q\n' \
+        "$MANAGER_BIN" "$action" "$config"
+      continue
+    fi
+    status=0
+    "$MANAGER_BIN" "$action" "$config" || status=$?
+    if [[ $status -eq 75 && $action == carrier-start ]]; then
+      printf 'carrier-up preserved explicit stop for %s\n' "$config" >&2
+    elif [[ $status -ne 0 ]]; then
+      return "$status"
+    fi
+  done
 }
 
 apply_state() {
   local state=$1
   if [[ $state == up ]]; then
     printf '%s carrier is up; starting router VMs\n' "$INTERFACE"
-    run_action start
+    run_action carrier-start
   else
     printf '%s carrier is down; stopping router VMs\n' "$INTERFACE"
-    run_action stop
+    run_action carrier-stop
   fi
 }
 

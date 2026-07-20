@@ -100,6 +100,10 @@ repository URL or knowledge of the consumer's layout:
 
     carrierControls.uplink-vms = {
       interface = "eno1";
+      requiredInterfaces = [
+        "vmbr1"
+        "vmbr4"
+      ];
       instances = [ "my-vm" ];
     };
   };
@@ -152,12 +156,15 @@ Promotion follows the guest command's exit status; captured guest stdout and
 stderr are logged when the command fails.
 
 The module's `carrierControls` option starts selected instances on carrier-up
-and explicitly stops them on carrier-down. Carrier-controlled instances may not
-also set `activation.startOnBoot`. The flake additionally exports the underlying
-`packages.<system>.carrier-watcher` for consumers that need a custom systemd
-adapter. Both paths use ordinary `systemctl start` and `stop` operations, so the
-manager's activation and stop-authority rules remain the only VM lifecycle
-path.
+and records the distinct automatic `carrier-down` stop reason before stopping
+them on carrier-down. Carrier-up may reverse only that automatic reason; it
+never clears an operator's `explicit-stop`. `requiredInterfaces` adds systemd
+device ordering for bridges or other host interfaces that must exist before the
+watcher starts. Carrier-controlled instances may not also set
+`activation.startOnBoot`. The flake additionally exports the underlying
+`packages.<system>.carrier-watcher` for consumers that need a custom adapter;
+the generated module path routes its actions through the manager's authority
+protocol.
 
 `runner.relativePath` defaults to `bin/run-<instance-name>-vm`. It may be set to
 another safe relative path when a flake configuration intentionally retains a
@@ -276,9 +283,10 @@ operators normally do not call it directly.
 
 `vm-status VM` returns JSON. `current` is the proven image in use;
 `candidate` is merely pending until an authorized rollout succeeds. `phase`
-describes the lifecycle state, `authority.explicitlyStopped` explains whether
-automatic starts are blocked, and `runnerPid` identifies the observed runner.
-A non-null candidate does not mean the running VM has already changed.
+describes the lifecycle state, `authority.explicitlyStopped` identifies an
+operator stop, `authority.stopReason` distinguishes it from an automatic
+`carrier-down`, and `runnerPid` identifies the observed runner. A non-null
+candidate does not mean the running VM has already changed.
 
 Build and transactionally roll out from an explicit local working tree:
 

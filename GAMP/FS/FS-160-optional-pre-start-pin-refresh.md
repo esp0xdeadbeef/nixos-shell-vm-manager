@@ -25,9 +25,9 @@ VM image target shall be built from that capture. The refresh action shall not
 modify the consumer's host-generation source or its approved lock.
 
 A normal start for this policy shall mean a configured boot start, an ordinary
-explicit service start, or a guest-shutdown restart. The policy shall not run
-for `vm-update`, rollout of an already admitted candidate, rollback, or
-recovery.
+explicit service start, carrier-up start, or a guest-shutdown restart. The
+policy shall not run for `vm-update`, rollout of an already admitted candidate,
+rollback, or recovery.
 
 A successfully built output shall be admitted with pin-refresh provenance
 through the same candidate boundary used by host-generation and local

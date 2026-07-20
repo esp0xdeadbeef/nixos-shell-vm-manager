@@ -44,6 +44,11 @@ pin-refresh source are retained by the host generation. Runtime startup consumes
 local objects only unless a VM explicitly enables online pin refresh; refresh
 failure retains the local host-pinned startup path.
 
+A host may obtain external connectivity from a managed VM. That VM's cold-boot
+path uses only the retained local closure and host-local interface readiness.
+Network-dependent refresh and upgrade services remain outside its bootstrap
+dependency chain.
+
 Host-controlled state is divided into `/var/lib` image metadata and optional
 persistent guest state, `/var/cache` replaceable runtime disks, `/run` session
 authority and locks, and Nix GC roots for admitted immutable images. Every base
