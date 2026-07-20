@@ -331,7 +331,7 @@ prepare_storage_unlocked() {
   if [[ "$EPHEMERAL_ROOT" == 1 ]]; then
     rm -f -- "$RUNTIME_DIR/$ROOT_DISK_FILE"
   fi
-  rm -f -- "$CONTROL_DIR/qmp.sock"
+  rm -f -- "$CONTROL_DIR/qmp.sock" "$CONTROL_DIR/qga.sock"
   if [[ "$PERSISTENT_DISK_ENABLE" == 1 && ! -e "$PERSISTENT_DIR/$PERSISTENT_DISK_FILE" ]]; then
     local temporary="$PERSISTENT_DIR/.${PERSISTENT_DISK_FILE}.tmp.$$"
     qemu-img create -f qcow2 "$temporary" "$PERSISTENT_DISK_SIZE" >/dev/null
@@ -448,7 +448,7 @@ activate_event() {
   if health_check_unlocked "$candidate_pid"; then
     if [[ -e "$CONTROL_DIR/stopped" ]]; then
       stop_child "$candidate_pid"
-      rm -f -- "$CONTROL_DIR/runner.pid" "$CONTROL_DIR/qmp.sock"
+      rm -f -- "$CONTROL_DIR/runner.pid" "$CONTROL_DIR/qmp.sock" "$CONTROL_DIR/qga.sock"
       set_phase_unlocked idle
       unlock_lifecycle
       return 75
@@ -464,7 +464,7 @@ activate_event() {
   fi
 
   stop_child "$candidate_pid"
-  rm -f -- "$CONTROL_DIR/runner.pid" "$CONTROL_DIR/qmp.sock"
+  rm -f -- "$CONTROL_DIR/runner.pid" "$CONTROL_DIR/qmp.sock" "$CONTROL_DIR/qga.sock"
   if [[ -e "$CONTROL_DIR/stopped" ]]; then
     set_phase_unlocked idle
     unlock_lifecycle
@@ -560,7 +560,7 @@ supervise() {
         break
       fi
     done
-    rm -f -- "$CONTROL_DIR/runner.pid" "$CONTROL_DIR/qmp.sock"
+    rm -f -- "$CONTROL_DIR/runner.pid" "$CONTROL_DIR/qmp.sock" "$CONTROL_DIR/qga.sock"
 
     if [[ $stopping -eq 1 ]]; then
       lock_lifecycle

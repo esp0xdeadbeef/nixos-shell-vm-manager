@@ -95,6 +95,10 @@ healthCheck.command = ''
 '';
 ```
 
+For consumers that use a QEMU Guest Agent healthcheck, `qga.sock` is reserved
+inside the per-VM control directory. The manager removes that transient socket
+before launch and after runner exit so a stale endpoint cannot block recovery.
+
 `runner.relativePath` defaults to `bin/run-<instance-name>-vm`. It may be set to
 another safe relative path when a flake configuration intentionally retains a
 different guest or runner name. Absolute paths and `..` path segments are

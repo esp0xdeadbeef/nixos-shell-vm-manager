@@ -127,11 +127,14 @@ export FAKE_SYSTEMCTL_LOG="$test_root/systemctl.log"
 bash "$manager" register "$config" "$baseline" host-generation baseline-id
 [[ $(jq -r '.candidate.sourceKind' "$test_root/state/state.json") == host-generation ]]
 [[ ! -e "$observation/active" ]]
+mkdir -p "$test_root/control"
+printf 'stale guest-agent socket placeholder\n' >"$test_root/control/qga.sock"
 bash "$manager" prepare-start "$config"
 bash "$manager" supervise "$config" &
 supervisor_pid=$!
 wait_for 'baseline promotion' "test \"\$(jq -r .current.image '$test_root/state/state.json')\" = '$baseline'"
 [[ $(cat "$observation/active") == baseline ]]
+[[ ! -e "$test_root/control/qga.sock" ]]
 
 # Admission does not interrupt the running runner; explicit rollout promotes.
 bash "$manager" register "$config" "$good" local-working-tree local-good
