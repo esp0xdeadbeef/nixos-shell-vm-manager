@@ -1,7 +1,10 @@
 # Requirements Traceability Matrix
 
 Document: nixos-shell VM Manager RaTM
-Status: Design baseline; evidence pending implementation
+Status: Implemented; SMT, SIT, and authorized `s-tau` HAT evidence current
+
+The controlled HAT outcome is recorded in `GAMP/HAT/README.md`. SAT remains
+unauthorized and is not implied by any status in this matrix.
 
 | FS | HDS | SDS | SMS | Planned verification |
 | --- | --- | --- | --- | --- |
