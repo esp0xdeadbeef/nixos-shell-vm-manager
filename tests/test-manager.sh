@@ -191,5 +191,6 @@ grep -q -- '--no-write-lock-file' "$FAKE_NIX_LOG"
 [[ ! -s "$FAKE_SYSTEMCTL_LOG" ]]
 [[ ! -e "$observation/active" ]]
 [[ $(cat "$test_root/persistent/marker") == persistent-data ]]
+[[ $(jq -r '.phase' "$test_root/state/state.json") == idle ]]
 
 printf 'all manager module tests passed\n'

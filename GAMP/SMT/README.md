@@ -16,7 +16,7 @@ claim live-host or stakeholder acceptance.
 | FS-070-HDS-010-SDS-010-SMS-010 | OK | module tests; baseline promotion, explicit rollout, bad functional health, healthy recovery, and foreground runner lifecycle |
 | FS-030-HDS-010-SDS-010-SMS-010 | OK | module tests; source copied before mutation, both no-lock-update flags observed, running fixture unchanged during build, and failed final authority check |
 | FS-130-HDS-010-SDS-010-SMS-010 | OK | dispatcher validation is ShellCheck-clean; module tests exercise update and state operations against generated-equivalent configuration |
-| FS-140-HDS-010-SDS-010-SMS-010 | OK | `nix build .#checks.x86_64-linux.shellcheck .#checks.x86_64-linux.module-tests .#checks.x86_64-linux.module-evaluation`; outputs include `/nix/store/1m6hc94wiy6jy7h91758ip57pg8mlp07-nixos-shell-vm-manager-shellcheck` and `/nix/store/qxpsam69h81qwhzqa248s1i5n0asi941-nixos-shell-vm-manager-module-tests` |
+| FS-140-HDS-010-SDS-010-SMS-010 | OK | `nix build .#checks.x86_64-linux.shellcheck .#checks.x86_64-linux.module-tests .#checks.x86_64-linux.module-evaluation`; outputs include `/nix/store/kg7rrs8fz6hcbipl5pimmdwffwfq60nk-nixos-shell-vm-manager-shellcheck` and `/nix/store/w0h62crvr1xjr7yw829qny1c7qcy80fd-nixos-shell-vm-manager-module-tests` |
 
 ## Seeded Negatives
 
@@ -27,5 +27,7 @@ claim live-host or stakeholder acceptance.
 - Jitter minimum greater than maximum cannot produce a generation.
 - A stop after local archive capture prevents rollout even though admission
   completes.
+- A stop during candidate health leaves the candidate pending, records the
+  manager idle, and does not start rollback recovery.
 - Build/archive commands lacking the configured immutable paths or lock inputs
   do not reach admission.

@@ -248,10 +248,12 @@ authorize_start() {
 mark_stopped() {
   intent_lock
   local epoch
-  epoch=$(current_epoch_unlocked)
-  epoch=$((epoch + 1))
-  atomic_text "$CONTROL_DIR/epoch" "$epoch"
-  atomic_text "$CONTROL_DIR/stopped" "explicit-stop"
+  if [[ ! -e "$CONTROL_DIR/stopped" ]]; then
+    epoch=$(current_epoch_unlocked)
+    epoch=$((epoch + 1))
+    atomic_text "$CONTROL_DIR/epoch" "$epoch"
+    atomic_text "$CONTROL_DIR/stopped" "explicit-stop"
+  fi
   rm -f -- "$CONTROL_DIR/preauthorized" "$CONTROL_DIR/force-candidate"
   intent_unlock
 }
@@ -444,6 +446,13 @@ activate_event() {
   launch_image_unlocked "$selected_image"
   local candidate_pid=$CHILD_PID
   if health_check_unlocked "$candidate_pid"; then
+    if [[ -e "$CONTROL_DIR/stopped" ]]; then
+      stop_child "$candidate_pid"
+      rm -f -- "$CONTROL_DIR/runner.pid" "$CONTROL_DIR/qmp.sock"
+      set_phase_unlocked idle
+      unlock_lifecycle
+      return 75
+    fi
     if [[ "$selected_slot" == candidate ]]; then
       promote_candidate_unlocked "$selected_image"
       printf '%s: candidate promoted to current\n' "$VM_NAME"
@@ -455,7 +464,12 @@ activate_event() {
   fi
 
   stop_child "$candidate_pid"
-  rm -f -- "$CONTROL_DIR/runner.pid"
+  rm -f -- "$CONTROL_DIR/runner.pid" "$CONTROL_DIR/qmp.sock"
+  if [[ -e "$CONTROL_DIR/stopped" ]]; then
+    set_phase_unlocked idle
+    unlock_lifecycle
+    return 75
+  fi
   if [[ "$selected_slot" != candidate ]]; then
     set_phase_unlocked operator-intervention "known-good image failed health"
     unlock_lifecycle
@@ -521,7 +535,20 @@ supervise() {
   fi
 
   while true; do
-    activate_event "$event" || return $?
+    local activation_status=0
+    activate_event "$event" || activation_status=$?
+    if [[ $activation_status -ne 0 ]]; then
+      if [[ $stopping -eq 1 || -e "$CONTROL_DIR/stopped" ]]; then
+        return 0
+      fi
+      return "$activation_status"
+    fi
+    if [[ $stopping -eq 1 ]]; then
+      lock_lifecycle
+      set_phase_unlocked idle
+      unlock_lifecycle
+      return 0
+    fi
     local active_pid=$CHILD_PID
     child_status=0
     while kill -0 "$active_pid" 2>/dev/null; do
@@ -536,6 +563,9 @@ supervise() {
     rm -f -- "$CONTROL_DIR/runner.pid" "$CONTROL_DIR/qmp.sock"
 
     if [[ $stopping -eq 1 ]]; then
+      lock_lifecycle
+      set_phase_unlocked idle
+      unlock_lifecycle
       return 0
     fi
     if [[ $rollout_requested -eq 1 ]]; then

@@ -16,6 +16,7 @@ let
   baseline = makeImage "test-vm" "baseline";
   good = makeImage "test-vm" "good";
   bad = makeImage "test-vm" "bad";
+  interrupted = makeImage "test-vm" "interrupted";
   guestCandidate = makeImage "test-vm" "guest-candidate";
   compatibleBaseline = makeImageAt "alias-vm" "compatible" "compatible-baseline";
 in
@@ -32,6 +33,7 @@ pkgs.testers.runNixOSTest {
     system.extraDependencies = [
       good
       bad
+      interrupted
       guestCandidate
     ];
     services.nixosShellVmManager = {
@@ -45,7 +47,14 @@ pkgs.testers.runNixOSTest {
           guestShutdownJitter.maxSeconds = 0;
         };
         healthCheck = {
-          command = ''label=$(cat /run/fake-vm/active 2>/dev/null || true); test -n "$label" && test "$label" != bad'';
+          command = ''
+            label=$(cat /run/fake-vm/active 2>/dev/null || true)
+            if test "$label" = interrupted && test ! -e /run/fake-vm/allow-interrupted; then
+              touch /run/fake-vm/health-entered
+              sleep 30
+            fi
+            test -n "$label" && test "$label" != bad
+          '';
           timeoutSeconds = 1;
           retries = 3;
           intervalSeconds = 0;
@@ -89,12 +98,31 @@ pkgs.testers.runNixOSTest {
     machine.succeed("echo durable > /var/lib/nixos-shell-vm-manager/persistent/test-vm/marker")
     machine.succeed("systemctl stop test-vm-vm.service")
     machine.succeed("test -e /run/nixos-shell-vm-manager/test-vm/stopped")
+    machine.succeed("test $(jq -r .phase /var/lib/nixos-shell-vm-manager/test-vm/state.json) = idle")
     machine.succeed("nixos-shell-vm-manager register /etc/nixos-shell-vm-manager/instances/test-vm.conf ${good} local-working-tree integration-good")
     machine.fail("systemctl is-active --quiet test-vm-vm.service")
 
     # Explicit rollout authorizes start and promotion.
     machine.succeed("vm-rollout test-vm")
     machine.wait_until_succeeds("test $(jq -r .current.image /var/lib/nixos-shell-vm-manager/test-vm/state.json) = ${good}")
+
+    # A stop during candidate health wins without quarantining the candidate or
+    # starting recovery. The service remains explicitly stopped and idle.
+    machine.succeed("rm -f /run/fake-vm/health-entered /run/fake-vm/allow-interrupted")
+    machine.succeed("nixos-shell-vm-manager register /etc/nixos-shell-vm-manager/instances/test-vm.conf ${interrupted} local-working-tree integration-interrupted")
+    machine.succeed("vm-rollout test-vm")
+    machine.wait_until_succeeds("test -e /run/fake-vm/health-entered")
+    machine.succeed("systemctl stop test-vm-vm.service")
+    state = json.loads(machine.succeed("vm-status test-vm"))
+    assert state["current"]["image"] == "${good}"
+    assert state["candidate"]["image"] == "${interrupted}"
+    assert state["failed"] is None
+    assert state["phase"] == "idle"
+    assert state["authority"]["explicitlyStopped"] is True
+    machine.fail("systemctl is-active --quiet test-vm-vm.service")
+    machine.succeed("nixos-shell-vm-manager register /etc/nixos-shell-vm-manager/instances/test-vm.conf ${good} host-generation integration-current")
+    machine.succeed("systemctl start test-vm-vm.service")
+    machine.wait_until_succeeds("test $(cat /run/fake-vm/active) = good")
 
     # Functional-health failure rolls back to the same proven current image.
     machine.succeed("nixos-shell-vm-manager register /etc/nixos-shell-vm-manager/instances/test-vm.conf ${bad} local-working-tree integration-bad")
@@ -112,6 +140,7 @@ pkgs.testers.runNixOSTest {
 
     machine.succeed("test $(cat /var/lib/nixos-shell-vm-manager/persistent/test-vm/marker) = durable")
     machine.succeed("systemctl stop test-vm-vm.service")
+    machine.succeed("test $(jq -r .phase /var/lib/nixos-shell-vm-manager/test-vm/state.json) = idle")
 
     # A configuration name may intentionally use a compatible runner name.
     machine.fail("systemctl is-active --quiet alias-vm-vm.service")
@@ -119,5 +148,6 @@ pkgs.testers.runNixOSTest {
     machine.wait_until_succeeds("test $(jq -r .current.image /var/lib/nixos-shell-vm-manager/alias-vm/state.json) = ${compatibleBaseline}")
     machine.succeed("test $(cat /run/fake-vm/active) = compatible-baseline")
     machine.succeed("systemctl stop alias-vm-vm.service")
+    machine.succeed("test $(jq -r .phase /var/lib/nixos-shell-vm-manager/alias-vm/state.json) = idle")
   '';
 }

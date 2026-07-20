@@ -12,7 +12,7 @@ nix build --print-build-logs .#checks.x86_64-linux.systemd-integration
 ```
 
 Result: `OK`, output
-`/nix/store/kpmz1cf5r8z8zzxvl2qd47z9lhx3dawg-vm-test-run-nixos-shell-vm-manager-systemd`.
+`/nix/store/d7s355r5xah21y5arfnid7la87cxwlcn-vm-test-run-nixos-shell-vm-manager-systemd`.
 The test used a real NixOS VM and real systemd. Its managed fixture service had
 `IPAddressDeny=any`; image selection and startup therefore completed without IP
 network access.
@@ -23,7 +23,7 @@ network access.
 | FS-030-HDS-010-SDS-010 | OK | SMT provides immutable construction evidence; systemd test admits the resulting local-source class only through the common registrar |
 | FS-040-HDS-010-SDS-010 | OK | Real service moved baseline/local records through candidate, current, previous, and failed slots |
 | FS-070-HDS-010-SDS-010 | OK | Real foreground service handled explicit start, explicit rollout, explicit stop, and natural runner exit as distinct events |
-| FS-075-HDS-010-SDS-010 | OK | `systemctl stop` created the session stop marker; later candidate admission did not start the service; `vm-rollout` supplied later authority |
+| FS-075-HDS-010-SDS-010 | OK | `systemctl stop` created the session stop marker and idle phase; later candidate admission did not start the service; a stop during candidate health left that candidate pending without starting recovery; `vm-rollout` supplied later authority |
 | FS-080-HDS-010-SDS-010 | OK | Exact runner stayed alive while the `bad` functional command failed; promotion was denied, proving process presence alone insufficient |
 | FS-090-HDS-010-SDS-010 | OK | Bad candidate was stopped and quarantined, unchanged current was restarted and health-checked, then the service remained healthy |
 | FS-100-HDS-010-SDS-010 | OK | Marker below the independent persistent directory survived promotion, failed rollout, rollback, guest restart, and final stop |
