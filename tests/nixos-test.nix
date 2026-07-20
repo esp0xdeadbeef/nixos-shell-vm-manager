@@ -20,6 +20,7 @@ let
   guestCandidate = makeImage "test-vm" "guest-candidate";
   compatibleBaseline = makeImageAt "alias-vm" "compatible" "compatible-baseline";
   refreshBaseline = makeImage "refresh-vm" "host-pinned";
+  noRestartBaseline = makeImage "no-restart" "no-restart";
   refreshFlake = builtins.path {
     path = ./pin-refresh-flake;
     name = "pin-refresh-flake";
@@ -40,6 +41,10 @@ pkgs.testers.runNixOSTest {
     # image selection, promotion, and rollback must still work.
     systemd.services.test-vm-vm.serviceConfig.IPAddressDeny = "any";
     systemd.services.refresh-vm-vm.serviceConfig.IPAddressDeny = "any";
+    systemd.services.no-restart-vm.serviceConfig = {
+      Environment = "TEST_OBSERVATION_DIR=/run/fake-no-restart";
+      IPAddressDeny = "any";
+    };
     system.extraDependencies = [
       good
       bad
@@ -99,6 +104,20 @@ pkgs.testers.runNixOSTest {
         };
         runner.stopGraceSeconds = 1;
       };
+      instances.no-restart = {
+        image = noRestartBaseline;
+        activation = {
+          restartOnGuestShutdown = false;
+          rolloutCandidateOnGuestShutdown = false;
+        };
+        healthCheck = {
+          command = "test $(cat /run/fake-no-restart/active) = no-restart";
+          timeoutSeconds = 1;
+          retries = 3;
+          intervalSeconds = 0;
+        };
+        runner.stopGraceSeconds = 1;
+      };
     };
   };
 
@@ -130,10 +149,24 @@ pkgs.testers.runNixOSTest {
     machine.succeed("tmux -S /run/nixos-shell/test-vm.tmux send-keys -t vm offline-console-probe Enter")
     machine.wait_until_succeeds("test $(cat /run/fake-vm/console-input) = offline-console-probe")
 
+    # FS-070-HDS-010-SDS-010-SMS-010: unexpected supervisor termination is
+    # recovered while the service still has start authority.
+    supervisor_pid = machine.succeed("systemctl show test-vm-vm.service -p MainPID --value").strip()
+    starts_before = int(machine.succeed("wc -l </run/fake-vm/starts").strip())
+    machine.succeed(f"kill -KILL {supervisor_pid}")
+    machine.wait_until_succeeds(
+        f"test $(systemctl show test-vm-vm.service -p MainPID --value) != {supervisor_pid}"
+    )
+    machine.wait_until_succeeds(
+        f"systemctl is-active --quiet test-vm-vm.service && test $(wc -l </run/fake-vm/starts) -gt {starts_before} && test $(cat /run/fake-vm/active) = baseline"
+    )
+    machine.succeed("tmux -S /run/nixos-shell/test-vm.tmux has-session -t vm")
+
     # The carrier adapter has automatic stop authority distinct from an
     # explicit operator stop. Carrier-up may reverse only its own stop reason.
     machine.succeed("nixos-shell-vm-manager carrier-stop /etc/nixos-shell-vm-manager/instances/test-vm.conf")
     machine.wait_until_succeeds("! systemctl is-active --quiet test-vm-vm.service")
+    machine.succeed("sleep 2; ! systemctl is-active --quiet test-vm-vm.service")
     state = json.loads(machine.succeed("vm-status test-vm"))
     assert state["authority"]["explicitlyStopped"] is False
     assert state["authority"]["stopReason"] == "carrier-down"
@@ -152,6 +185,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed("test $(jq -r .phase /var/lib/nixos-shell-vm-manager/test-vm/state.json) = idle")
     machine.succeed("nixos-shell-vm-manager register /etc/nixos-shell-vm-manager/instances/test-vm.conf ${good} local-working-tree integration-good")
     machine.fail("systemctl is-active --quiet test-vm-vm.service")
+    machine.succeed("sleep 2; ! systemctl is-active --quiet test-vm-vm.service")
     machine.fail("nixos-shell-vm-manager carrier-start /etc/nixos-shell-vm-manager/instances/test-vm.conf")
     machine.fail("systemctl is-active --quiet test-vm-vm.service")
     state = json.loads(machine.succeed("vm-status test-vm"))
@@ -208,6 +242,18 @@ pkgs.testers.runNixOSTest {
     machine.succeed("test $(cat /run/fake-vm/active) = compatible-baseline")
     machine.succeed("systemctl stop alias-vm-vm.service")
     machine.succeed("test $(jq -r .phase /var/lib/nixos-shell-vm-manager/alias-vm/state.json) = idle")
+
+    # An explicit false policy is a deliberate inactive outcome rather than an
+    # unexpected supervisor exit, so systemd must not undo it.
+    machine.succeed("systemctl start no-restart-vm.service")
+    machine.wait_until_succeeds("test $(cat /run/fake-no-restart/active) = no-restart")
+    no_restart_runner = machine.succeed(
+        "cat /run/nixos-shell-vm-manager/no-restart/runner.pid"
+    ).strip()
+    machine.succeed(f"kill -TERM {no_restart_runner}")
+    machine.wait_until_succeeds("! systemctl is-active --quiet no-restart-vm.service")
+    machine.succeed("sleep 2; ! systemctl is-active --quiet no-restart-vm.service")
+    machine.succeed("test $(jq -r .phase /var/lib/nixos-shell-vm-manager/no-restart/state.json) = idle")
 
     # FS-160-HDS-010-SDS-010: a real systemd start with no service IP access
     # refreshes the local flake lock, admits its immutable output, and promotes.

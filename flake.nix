@@ -286,8 +286,17 @@
         in
         {
           module-evaluation =
-            assert evaluation.config.systemd.services.test-vm-vm.serviceConfig.Restart == "no";
+            assert evaluation.config.systemd.services.test-vm-vm.serviceConfig.Restart == "always";
+            assert evaluation.config.systemd.services.test-vm-vm.serviceConfig.RestartSec == "1s";
+            assert
+              evaluation.config.systemd.services.test-vm-vm.serviceConfig.RestartPreventExitStatus == [
+                75
+                78
+              ];
+            assert evaluation.config.systemd.services.test-vm-vm.serviceConfig.SuccessExitStatus == [ 75 ];
             assert !evaluation.config.services.nixosShellVmManager.instances.test-vm.activation.startOnBoot;
+            assert
+              evaluation.config.services.nixosShellVmManager.instances.test-vm.activation.restartOnGuestShutdown;
             assert !evaluation.config.services.nixosShellVmManager.instances.test-vm.activation.refreshPins;
             assert
               evaluation.config.services.nixosShellVmManager.instances.test-vm.runner.relativePath

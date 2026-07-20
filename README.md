@@ -215,7 +215,9 @@ On a guest-initiated shutdown, the foreground supervisor remains alive. It can
 wait the configured jitter and roll out a pending candidate, or restart current
 according to that VM's policy. Stopping the systemd service is a separate event:
 the stop marker is written before the runner is terminated and guest recovery
-is not entered.
+is not entered. Systemd also recovers an unexpectedly terminated supervisor.
+It does not override a disabled `restartOnGuestShutdown` policy, carrier-down,
+an explicit service stop, or a terminal candidate-and-recovery failure.
 
 ## Offline console
 

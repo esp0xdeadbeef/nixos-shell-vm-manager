@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# FS-070-HDS-010-SDS-010-SMS-010: systemd may recover an unexpectedly
+# terminated supervisor, while these deliberate outcomes suppress recovery.
+readonly RESTART_BLOCKED_EXIT=75
+readonly TERMINAL_FAILURE_EXIT=78
+
 die() {
   printf 'nixos-shell-vm-manager: %s\n' "$*" >&2
   exit 1
@@ -698,7 +703,7 @@ supervise() {
   require_mutation_authority
   ensure_directories
 
-  local stopping=0 rollout_requested=0 child_status=0 event
+  local stopping=0 stop_exit_status=0 rollout_requested=0 child_status=0 event
   CHILD_PID=
 
   on_term() {
@@ -716,6 +721,7 @@ supervise() {
   }
   on_carrier_stop() {
     stopping=1
+    stop_exit_status=$RESTART_BLOCKED_EXIT
     if [[ ${CHILD_PID:-} =~ ^[0-9]+$ ]]; then
       stop_child "$CHILD_PID"
     fi
@@ -738,16 +744,20 @@ supervise() {
     local activation_status=0
     activate_event "$event" || activation_status=$?
     if [[ $activation_status -ne 0 ]]; then
-      if [[ $stopping -eq 1 || -e "$CONTROL_DIR/stopped" ]]; then
-        return 0
+      if [[ $stopping -eq 1 ]]; then
+        return "$stop_exit_status"
       fi
-      return "$activation_status"
+      if [[ $activation_status -eq $RESTART_BLOCKED_EXIT ]] || \
+        [[ -e "$CONTROL_DIR/stopped" ]]; then
+        return "$RESTART_BLOCKED_EXIT"
+      fi
+      return "$TERMINAL_FAILURE_EXIT"
     fi
     if [[ $stopping -eq 1 ]]; then
       lock_lifecycle
       set_phase_unlocked idle
       unlock_lifecycle
-      return 0
+      return "$stop_exit_status"
     fi
     local active_pid=$CHILD_PID
     child_status=0
@@ -774,7 +784,7 @@ supervise() {
       lock_lifecycle
       set_phase_unlocked idle
       unlock_lifecycle
-      return 0
+      return "$stop_exit_status"
     fi
     if [[ $rollout_requested -eq 1 ]]; then
       rollout_requested=0
@@ -787,7 +797,7 @@ supervise() {
     unlock_lifecycle
     if [[ "$RESTART_ON_GUEST_SHUTDOWN" != 1 ]]; then
       printf '%s: guest stopped; restart policy is disabled\n' "$VM_NAME"
-      return 0
+      return "$RESTART_BLOCKED_EXIT"
     fi
     local delay
     delay=$(random_jitter "$JITTER_MIN_SECONDS" "$JITTER_MAX_SECONDS")

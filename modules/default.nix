@@ -437,7 +437,16 @@ let
         ExecStartPre = "${manager}/bin/nixos-shell-vm-manager prepare-start ${instanceConfigs.${name}}";
         ExecStart = "${manager}/bin/nixos-shell-vm-manager supervise ${instanceConfigs.${name}}";
         ExecStop = "${manager}/bin/nixos-shell-vm-manager stop ${instanceConfigs.${name}} $MAINPID";
-        Restart = "no";
+        # FS-070-HDS-010-SDS-010-SMS-010: recover unexpected supervisor
+        # termination. Exit 75 is an authorized inactive state; exit 78 is a
+        # terminal rollout failure that must remain visible to the operator.
+        Restart = "always";
+        RestartSec = "1s";
+        RestartPreventExitStatus = [
+          75
+          78
+        ];
+        SuccessExitStatus = [ 75 ];
         KillMode = "mixed";
         TimeoutStopSec = "${toString (instance.runner.stopGraceSeconds + 10)}s";
       };
