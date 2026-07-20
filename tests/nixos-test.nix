@@ -1,0 +1,101 @@
+{
+  pkgs,
+  self,
+}:
+let
+  makeImage =
+    name: label:
+    pkgs.runCommand "${name}-${label}-image" { } ''
+      mkdir -p "$out/bin"
+      cp ${./fake-runner.sh} "$out/bin/run-${name}-vm"
+      chmod +x "$out/bin/run-${name}-vm"
+      substituteInPlace "$out/bin/run-${name}-vm" --replace-fail '@LABEL@' '${label}'
+      patchShebangs "$out/bin/run-${name}-vm"
+    '';
+  baseline = makeImage "test-vm" "baseline";
+  good = makeImage "test-vm" "good";
+  bad = makeImage "test-vm" "bad";
+  guestCandidate = makeImage "test-vm" "guest-candidate";
+in
+pkgs.testers.runNixOSTest {
+  name = "nixos-shell-vm-manager-systemd";
+
+  nodes.machine = { ... }: {
+    imports = [ self.nixosModules.default ];
+    system.stateVersion = "26.05";
+    environment.systemPackages = [ pkgs.jq ];
+    # This test service has no IP network access. Its local functional check,
+    # image selection, promotion, and rollback must still work.
+    systemd.services.test-vm-vm.serviceConfig.IPAddressDeny = "any";
+    system.extraDependencies = [
+      good
+      bad
+      guestCandidate
+    ];
+    services.nixosShellVmManager = {
+      enable = true;
+      instances.test-vm = {
+        image = baseline;
+        activation = {
+          restartOnGuestShutdown = true;
+          rolloutCandidateOnGuestShutdown = true;
+          guestShutdownJitter.minSeconds = 0;
+          guestShutdownJitter.maxSeconds = 0;
+        };
+        healthCheck = {
+          command = ''label=$(cat /run/fake-vm/active 2>/dev/null || true); test -n "$label" && test "$label" != bad'';
+          timeoutSeconds = 1;
+          retries = 3;
+          intervalSeconds = 0;
+        };
+        runner.stopGraceSeconds = 1;
+      };
+    };
+  };
+
+  testScript = ''
+    import json
+
+    machine.start()
+    machine.wait_for_unit("multi-user.target")
+
+    # Host activation admitted baseline but startOnBoot=false preserved stop.
+    machine.fail("systemctl is-active --quiet test-vm-vm.service")
+    state = json.loads(machine.succeed("vm-status test-vm"))
+    assert state["candidate"]["image"] == "${baseline}"
+    machine.fail("test -e /run/fake-vm/active")
+
+    machine.succeed("systemctl start test-vm-vm.service")
+    machine.wait_until_succeeds("test $(jq -r .current.image /var/lib/nixos-shell-vm-manager/test-vm/state.json) = ${baseline}")
+    machine.succeed("test $(cat /run/fake-vm/active) = baseline")
+
+    # Explicit stop is retained across later candidate admission.
+    machine.succeed("mkdir -p /var/lib/nixos-shell-vm-manager/persistent/test-vm")
+    machine.succeed("echo durable > /var/lib/nixos-shell-vm-manager/persistent/test-vm/marker")
+    machine.succeed("systemctl stop test-vm-vm.service")
+    machine.succeed("test -e /run/nixos-shell-vm-manager/test-vm/stopped")
+    machine.succeed("nixos-shell-vm-manager register /etc/nixos-shell-vm-manager/instances/test-vm.conf ${good} local-working-tree integration-good")
+    machine.fail("systemctl is-active --quiet test-vm-vm.service")
+
+    # Explicit rollout authorizes start and promotion.
+    machine.succeed("vm-rollout test-vm")
+    machine.wait_until_succeeds("test $(jq -r .current.image /var/lib/nixos-shell-vm-manager/test-vm/state.json) = ${good}")
+
+    # Functional-health failure rolls back to the same proven current image.
+    machine.succeed("nixos-shell-vm-manager register /etc/nixos-shell-vm-manager/instances/test-vm.conf ${bad} local-working-tree integration-bad")
+    machine.succeed("vm-rollout test-vm")
+    machine.wait_until_succeeds("test $(jq -r .failed.image /var/lib/nixos-shell-vm-manager/test-vm/state.json) = ${bad}")
+    machine.succeed("test $(jq -r .current.image /var/lib/nixos-shell-vm-manager/test-vm/state.json) = ${good}")
+    machine.succeed("test $(cat /run/fake-vm/active) = good")
+
+    # Natural runner exit is guest shutdown and rolls a pending candidate out.
+    machine.succeed("nixos-shell-vm-manager register /etc/nixos-shell-vm-manager/instances/test-vm.conf ${guestCandidate} local-working-tree guest-event")
+    pid = machine.succeed("cat /run/nixos-shell-vm-manager/test-vm/runner.pid").strip()
+    machine.succeed(f"kill -TERM {pid}")
+    machine.wait_until_succeeds("test $(jq -r .current.image /var/lib/nixos-shell-vm-manager/test-vm/state.json) = ${guestCandidate}")
+    machine.succeed("test $(cat /run/fake-vm/active) = guest-candidate")
+
+    machine.succeed("test $(cat /var/lib/nixos-shell-vm-manager/persistent/test-vm/marker) = durable")
+    machine.succeed("systemctl stop test-vm-vm.service")
+  '';
+}
