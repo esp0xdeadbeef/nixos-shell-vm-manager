@@ -225,9 +225,15 @@ pkgs.testers.runNixOSTest {
 
     # Natural runner exit is guest shutdown and rolls a pending candidate out.
     machine.succeed("nixos-shell-vm-manager register /etc/nixos-shell-vm-manager/instances/test-vm.conf ${guestCandidate} local-working-tree guest-event")
+    guest_shutdown_supervisor = machine.succeed(
+        "systemctl show test-vm-vm.service -p MainPID --value"
+    ).strip()
     pid = machine.succeed("cat /run/nixos-shell-vm-manager/test-vm/runner.pid").strip()
     machine.succeed(f"kill -TERM {pid}")
     machine.wait_until_succeeds("test $(jq -r .current.image /var/lib/nixos-shell-vm-manager/test-vm/state.json) = ${guestCandidate}")
+    machine.succeed(
+        f"test $(systemctl show test-vm-vm.service -p MainPID --value) != {guest_shutdown_supervisor}"
+    )
     machine.succeed("test $(cat /run/fake-vm/active) = guest-candidate")
     machine.succeed("tmux -S /run/nixos-shell/test-vm.tmux has-session -t vm")
 

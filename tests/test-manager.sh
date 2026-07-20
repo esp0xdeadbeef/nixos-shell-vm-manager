@@ -181,6 +181,11 @@ fi
 grep -q 'console.enable = false' "$test_root/attach.err"
 [[ $(bash "$manager" dispatch-list "$test_root") == test-vm ]]
 
+# systemd invokes ExecStop after a main process exits naturally with no live
+# MAINPID. That cleanup path must not fabricate explicit stop authority.
+bash "$manager" stop "$config"
+[[ ! -e "$test_root/control/stopped" ]]
+
 # Admission is non-activating and first explicit start promotes the baseline.
 bash "$manager" register "$config" "$baseline" host-generation baseline-id
 [[ $(jq -r '.candidate.sourceKind' "$test_root/state/state.json") == host-generation ]]
@@ -409,6 +414,11 @@ printf '%s\n' "$good" >"$FAKE_PIN_BUILD_OUTPUT_FILE"
 export FAKE_UPDATED_LOCK_CONTENT='{"pins":"guest-refresh"}'
 : >"$FAKE_NIX_LOG"
 kill -TERM "$(cat "$test_root/control/runner.pid")"
+wait "$supervisor_pid"
+supervisor_pid=
+bash "$manager" prepare-start "$config"
+bash "$manager" supervise "$config" &
+supervisor_pid=$!
 wait_for 'guest pin refresh' "test \"\$(jq -r .current.image '$test_root/state/state.json')\" = '$good'"
 [[ $(jq -r '.current.sourceKind' "$test_root/state/state.json") == pin-refresh ]]
 grep -q '^flake update --refresh --flake path:' "$FAKE_NIX_LOG"

@@ -278,11 +278,14 @@ opts out. Stopping the VM service removes its live console endpoint.
 
 After `nixos-rebuild switch`, an already running VM intentionally keeps its
 old manager process because VM services set `restartIfChanged = false`. This
-protects availability, but it also means a VM started by a manager generation
-without console support cannot gain a tmux session in place. `vm-attach` reports
-this as an unavailable session. The new console is created on the next
-deliberate service stop/start; do not restart solely to obtain it when downtime
-is unacceptable.
+protects availability. An authorized guest shutdown hands recovery back to
+systemd, so the replacement supervisor uses the currently loaded manager and
+generated instance configuration before it selects and checks the next image.
+A VM started by a manager generation without console support still cannot gain
+a tmux session in place; `vm-attach` reports this as an unavailable session.
+The new console is created on the next guest-shutdown recovery or deliberate
+service stop/start; do not restart solely to obtain it when downtime is
+unacceptable.
 
 ## Operator commands
 

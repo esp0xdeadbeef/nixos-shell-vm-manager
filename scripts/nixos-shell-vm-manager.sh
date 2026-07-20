@@ -337,10 +337,15 @@ stop_service() {
   local config=$1 supervisor_pid=${2:-}
   load_config "$config"
   require_mutation_authority
-  mark_stopped
-  if [[ "$supervisor_pid" =~ ^[0-9]+$ ]] && kill -0 "$supervisor_pid" 2>/dev/null; then
-    kill -TERM "$supervisor_pid" 2>/dev/null || true
+  # systemd also invokes ExecStop after the main process has already exited.
+  # In that case MAINPID is empty and this is cleanup, not operator authority.
+  # A real `systemctl stop` runs ExecStop while the supervisor is still alive.
+  if [[ ! "$supervisor_pid" =~ ^[0-9]+$ ]] || \
+    ! kill -0 "$supervisor_pid" 2>/dev/null; then
+    return 0
   fi
+  mark_stopped
+  kill -TERM "$supervisor_pid" 2>/dev/null || true
 }
 
 carrier_start() {
@@ -436,6 +441,19 @@ authority_matches() {
   fi
   intent_unlock
   return 1
+}
+
+preauthorize_restart_event() {
+  local event=$1 epoch
+  intent_lock
+  if [[ -e "$CONTROL_DIR/stopped" ]]; then
+    intent_unlock
+    return "$RESTART_BLOCKED_EXIT"
+  fi
+  epoch=$(current_epoch_unlocked)
+  atomic_text "$CONTROL_DIR/start-reason" "$event"
+  atomic_text "$CONTROL_DIR/preauthorized" "$epoch"
+  intent_unlock
 }
 
 random_jitter() {
@@ -809,11 +827,14 @@ supervise() {
     delay=$(random_jitter "$JITTER_MIN_SECONDS" "$JITTER_MAX_SECONDS")
     printf '%s: guest stopped; restarting after %s seconds\n' "$VM_NAME" "$delay"
     sleep "$delay"
-    if [[ -e "$CONTROL_DIR/stopped" ]]; then
+    if ! preauthorize_restart_event guest-shutdown; then
       printf '%s: guest restart revoked by explicit stop\n' "$VM_NAME" >&2
-      return 0
+      return "$RESTART_BLOCKED_EXIT"
     fi
-    event=guest-shutdown
+    # Let systemd create a fresh supervisor from the currently loaded unit.
+    # This preserves the running VM during host activation while ensuring its
+    # next guest-shutdown recovery uses the newest manager and generated config.
+    return 0
   done
 }
 
