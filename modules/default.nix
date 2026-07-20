@@ -106,6 +106,15 @@ let
           default = "nixosConfigurations.${name}.config.system.build.nixos-shell";
           description = "Image attribute built from the immutably captured refreshed flake.";
         };
+        lockScope = mkOption {
+          type = types.strMatching "[A-Za-z0-9][A-Za-z0-9._-]*";
+          default = "host";
+          description = ''
+            Runtime flake-lock scope shared by pin-refresh instances. Keep the
+            default for the consumer host flake; assign a distinct scope to
+            each custom flake repository.
+          '';
+        };
       };
 
       activation = {
@@ -278,6 +287,8 @@ let
       CONTROL_DIR=${escapeShellArg "${cfg.controlDirectory}/${name}"}
       LOCK_DIR=${escapeShellArg "${cfg.lockDirectory}/${name}"}
       BUILD_TOKEN_DIRECTORY=${escapeShellArg "${cfg.lockDirectory}/build-tokens"}
+      PIN_REFRESH_SHARED_DIRECTORY=${escapeShellArg "${cfg.stateDirectory}/pin-refresh-locks"}
+      PIN_REFRESH_SHARED_LOCK_DIRECTORY=${escapeShellArg "${cfg.lockDirectory}/pin-refresh-locks"}
       MAX_CONCURRENT_BUILDS=${toString cfg.maxConcurrentBuilds}
       RUNNER_RELATIVE_PATH=${escapeShellArg instance.runner.relativePath}
       RUNNER_ARGUMENTS_JSON=${escapeShellArg (builtins.toJSON instance.runner.arguments)}
@@ -297,6 +308,7 @@ let
         )
       }
       PIN_REFRESH_FLAKE_ATTRIBUTE=${escapeShellArg instance.pinRefresh.flakeAttribute}
+      PIN_REFRESH_LOCK_SCOPE=${escapeShellArg instance.pinRefresh.lockScope}
       JITTER_MIN_SECONDS=${toString instance.activation.guestShutdownJitter.minSeconds}
       JITTER_MAX_SECONDS=${toString instance.activation.guestShutdownJitter.maxSeconds}
       EPHEMERAL_ROOT=${bool instance.storage.ephemeralRoot}

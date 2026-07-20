@@ -130,6 +130,8 @@ GC_ROOT_DIR='$test_root/gcroots'
 CONTROL_DIR='$test_root/control'
 LOCK_DIR='$test_root/locks'
 BUILD_TOKEN_DIRECTORY='$test_root/locks/tokens'
+PIN_REFRESH_SHARED_DIRECTORY='$test_root/shared-pin-refresh'
+PIN_REFRESH_SHARED_LOCK_DIRECTORY='$test_root/locks/shared-pin-refresh'
 MAX_CONCURRENT_BUILDS=1
 RUNNER_RELATIVE_PATH='bin/run-test-vm-vm'
 RUNNER_ARGUMENTS_JSON='[]'
@@ -145,6 +147,7 @@ USE_CANDIDATE_ON_EXPLICIT_START=1
 REFRESH_PINS=0
 PIN_REFRESH_FLAKE='$pin_source'
 PIN_REFRESH_FLAKE_ATTRIBUTE='packages.test-vm'
+PIN_REFRESH_LOCK_SCOPE='host'
 JITTER_MIN_SECONDS=0
 JITTER_MAX_SECONDS=0
 EPHEMERAL_ROOT=1
@@ -310,12 +313,32 @@ wait_for 'pin-refresh promotion' "test \"\$(jq -r .current.image '$test_root/sta
 [[ $(cat "$pin_source/flake.lock") == '{"pins":"host"}' ]]
 [[ $(cat "$FAKE_REFRESH_LOCK_BEFORE") == '{"pins":"host"}' ]]
 [[ $(cat "$FAKE_PIN_ARCHIVE/flake.lock") == '{"pins":"refreshed"}' ]]
+[[ $(cat "$test_root/shared-pin-refresh/host.flake.lock") == '{"pins":"refreshed"}' ]]
 [[ $(jq -r '.current.sourceKind' "$test_root/state/state.json") == pin-refresh ]]
 expected_lock_identity="sha256:$(sha256sum "$FAKE_PIN_ARCHIVE/flake.lock" | cut -d ' ' -f 1)"
 [[ $(jq -r '.current.lockIdentity' "$test_root/state/state.json") == "$expected_lock_identity" ]]
 grep -q '^flake update --refresh --flake path:' "$FAKE_NIX_LOG"
 grep -q '^flake archive --json --no-update-lock-file --no-write-lock-file path:' "$FAKE_NIX_LOG"
 grep -q '^build --no-link --print-out-paths --no-update-lock-file --no-write-lock-file path:' "$FAKE_NIX_LOG"
+
+# A different VM in the same host scope starts from the lock published above,
+# rather than from the older lock retained in its immutable host source.
+second_config="$test_root/second-vm.conf"
+cp -- "$config" "$second_config"
+sed -i \
+  -e "s|VM_NAME='test-vm'|VM_NAME='second-vm'|" \
+  -e "s|STATE_DIR='$test_root/state'|STATE_DIR='$test_root/second-state'|" \
+  -e "s|RUNTIME_DIR='$test_root/runtime'|RUNTIME_DIR='$test_root/second-runtime'|" \
+  -e "s|PERSISTENT_DIR='$test_root/persistent'|PERSISTENT_DIR='$test_root/second-persistent'|" \
+  -e "s|GC_ROOT_DIR='$test_root/gcroots'|GC_ROOT_DIR='$test_root/second-gcroots'|" \
+  -e "s|CONTROL_DIR='$test_root/control'|CONTROL_DIR='$test_root/second-control'|" \
+  -e "s|LOCK_DIR='$test_root/locks'|LOCK_DIR='$test_root/second-locks'|" \
+  -e "s|SYSTEMD_UNIT='test-vm-vm.service'|SYSTEMD_UNIT='second-vm-vm.service'|" \
+  "$second_config"
+bash "$manager" construct-pin-refresh "$second_config"
+[[ $(cat "$FAKE_REFRESH_LOCK_BEFORE") == '{"pins":"refreshed"}' ]]
+[[ $(jq -r '.candidate.sourceKind' "$test_root/second-state/state.json") == pin-refresh ]]
+[[ $(cat "$test_root/shared-pin-refresh/host.flake.lock") == '{"pins":"refreshed"}' ]]
 
 # A failed lock update leaves registry state unchanged and starts current.
 bash "$manager" stop "$config" "$supervisor_pid"
@@ -335,12 +358,14 @@ if grep -q '^flake archive ' "$FAKE_NIX_LOG"; then
 fi
 
 # Failed immutable capture also leaves the current image unchanged and skips
-# construction.
+# construction. It also cannot publish its updated temporary lock into the
+# shared host scope.
 bash "$manager" stop "$config" "$supervisor_pid"
 wait "$supervisor_pid"
 supervisor_pid=
 rm -f -- "$fake_update_failure"
 : >"$fake_archive_failure"
+export FAKE_UPDATED_LOCK_CONTENT='{"pins":"failed-archive"}'
 : >"$FAKE_NIX_LOG"
 bash "$manager" prepare-start "$config"
 bash "$manager" supervise "$config" &
@@ -352,6 +377,7 @@ grep -q '^flake archive ' "$FAKE_NIX_LOG"
 if grep -q '^build ' "$FAKE_NIX_LOG"; then
   exit 1
 fi
+[[ $(cat "$test_root/shared-pin-refresh/host.flake.lock") == '{"pins":"refreshed"}' ]]
 
 # Failed refreshed construction has the same unchanged-slot fallback.
 bash "$manager" stop "$config" "$supervisor_pid"
@@ -359,6 +385,7 @@ wait "$supervisor_pid"
 supervisor_pid=
 rm -f -- "$fake_archive_failure"
 : >"$fake_build_failure"
+export FAKE_UPDATED_LOCK_CONTENT='{"pins":"guest-refresh"}'
 : >"$FAKE_NIX_LOG"
 bash "$manager" prepare-start "$config"
 bash "$manager" supervise "$config" &
@@ -367,6 +394,7 @@ wait_for 'failed-build fallback' "test \"\$(cat '$observation/active' 2>/dev/nul
 [[ $(jq -r '.current.image' "$test_root/state/state.json") == "$host_new" ]]
 [[ $(jq -r '.candidate' "$test_root/state/state.json") == null ]]
 grep -q '^build ' "$FAKE_NIX_LOG"
+[[ $(cat "$test_root/shared-pin-refresh/host.flake.lock") == '{"pins":"refreshed"}' ]]
 
 # Explicit rollout of an admitted candidate bypasses pin refresh.
 bash "$manager" register "$config" "$baseline" local-working-tree explicit-local
@@ -378,11 +406,14 @@ wait_for 'excluded explicit rollout' "test \"\$(jq -r .current.image '$test_root
 # A guest shutdown is eligible and refreshes pins before the restart.
 rm -f -- "$fake_build_failure"
 printf '%s\n' "$good" >"$FAKE_PIN_BUILD_OUTPUT_FILE"
+export FAKE_UPDATED_LOCK_CONTENT='{"pins":"guest-refresh"}'
 : >"$FAKE_NIX_LOG"
 kill -TERM "$(cat "$test_root/control/runner.pid")"
 wait_for 'guest pin refresh' "test \"\$(jq -r .current.image '$test_root/state/state.json')\" = '$good'"
 [[ $(jq -r '.current.sourceKind' "$test_root/state/state.json") == pin-refresh ]]
 grep -q '^flake update --refresh --flake path:' "$FAKE_NIX_LOG"
+[[ $(cat "$FAKE_REFRESH_LOCK_BEFORE") == '{"pins":"refreshed"}' ]]
+[[ $(cat "$test_root/shared-pin-refresh/host.flake.lock") == '{"pins":"guest-refresh"}' ]]
 
 bash "$manager" stop "$config" "$supervisor_pid"
 wait "$supervisor_pid"

@@ -73,6 +73,21 @@ guest_arguments=(
   container@core.service
 )
 
+# With only a socket argument, the helper uses its network-independent default:
+# the exact guest is healthy when it has no failed systemd units.
+start_listener 0
+"$health_check" "$socket"
+jq -se '
+  map(select(.execute == "guest-exec"))[0].arguments
+  | .path == "/run/current-system/sw/bin/bash"
+    and .arg[0] == "-c"
+    and (.arg[1] | contains("list-units --state=failed"))
+' "$request_log" >/dev/null
+kill "$listener_pid"
+wait "$listener_pid" 2>/dev/null || true
+listener_pid=
+
+# Callers can still supply a stricter, VM-specific command.
 start_listener 0
 "$health_check" "$socket" "$guest_command" "${guest_arguments[@]}"
 expected_arguments=$(printf '%s\n' "${guest_arguments[@]}" | jq -R . | jq -s .)

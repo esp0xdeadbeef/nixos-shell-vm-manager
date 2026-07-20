@@ -71,7 +71,11 @@ load_config() {
   : "${RUNNER_RELATIVE_PATH:?}" "${HEALTH_COMMAND:?}" "${SYSTEMD_UNIT:?}"
   : "${CONSOLE_ENABLE:?}" "${CONSOLE_SOCKET:?}" "${CONSOLE_SESSION:?}"
   : "${REFRESH_PINS:?}" "${PIN_REFRESH_FLAKE_ATTRIBUTE:?}"
+  : "${PIN_REFRESH_SHARED_DIRECTORY:?}" "${PIN_REFRESH_SHARED_LOCK_DIRECTORY:?}"
+  : "${PIN_REFRESH_LOCK_SCOPE:?}"
   valid_vm_name "$VM_NAME" || die "invalid configured VM name: $VM_NAME"
+  [[ "$PIN_REFRESH_LOCK_SCOPE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || \
+    die "invalid pin-refresh lock scope: $PIN_REFRESH_LOCK_SCOPE"
 }
 
 require_mutation_authority() {
@@ -91,8 +95,10 @@ atomic_text() {
 
 ensure_directories() {
   mkdir -p "$STATE_DIR" "$RUNTIME_DIR" "$PERSISTENT_DIR" \
-    "$GC_ROOT_DIR" "$CONTROL_DIR" "$LOCK_DIR" "$BUILD_TOKEN_DIRECTORY"
+    "$GC_ROOT_DIR" "$CONTROL_DIR" "$LOCK_DIR" "$BUILD_TOKEN_DIRECTORY" \
+    "$PIN_REFRESH_SHARED_DIRECTORY" "$PIN_REFRESH_SHARED_LOCK_DIRECTORY"
   chmod 0700 "$STATE_DIR" "$CONTROL_DIR"
+  chmod 0700 "$PIN_REFRESH_SHARED_DIRECTORY" "$PIN_REFRESH_SHARED_LOCK_DIRECTORY"
 }
 
 initialize_state_unlocked() {
@@ -846,10 +852,13 @@ construct_pin_refresh_candidate() (
   ensure_directories
   exec {CONSTRUCTION_FD}>"$LOCK_DIR/construction.lock"
   flock "$CONSTRUCTION_FD"
+  exec {PIN_REFRESH_SHARED_FD}>"$PIN_REFRESH_SHARED_LOCK_DIRECTORY/$PIN_REFRESH_LOCK_SCOPE.lock"
+  flock "$PIN_REFRESH_SHARED_FD"
   acquire_build_token
 
-  local workspace
+  local workspace shared_lock
   workspace=$(mktemp -d "$RUNTIME_DIR/.pin-refresh.XXXXXX")
+  shared_lock="$PIN_REFRESH_SHARED_DIRECTORY/$PIN_REFRESH_LOCK_SCOPE.flake.lock"
   # Invoked indirectly by the EXIT trap below.
   # shellcheck disable=SC2329
   cleanup_pin_refresh_workspace() {
@@ -859,6 +868,10 @@ construct_pin_refresh_candidate() (
 
   cp -a -- "$PIN_REFRESH_FLAKE/." "$workspace/"
   chmod -R u+w -- "$workspace"
+  if [[ -f "$shared_lock" ]]; then
+    cp -- "$shared_lock" "$workspace/flake.lock"
+    chmod u+w -- "$workspace/flake.lock"
+  fi
   "$NIX_BIN" flake update --refresh --flake "path:$workspace"
   [[ -f "$workspace/flake.lock" ]] || die "pin refresh did not produce flake.lock"
 
@@ -882,8 +895,15 @@ construct_pin_refresh_candidate() (
   output=$(head -n 1 <<<"$output_lines")
   register_image "$config" "$output" pin-refresh "$archive" "$lock_identity"
 
+  local shared_lock_temporary="${shared_lock}.tmp.$$"
+  cp -- "$workspace/flake.lock" "$shared_lock_temporary"
+  chmod 0600 "$shared_lock_temporary"
+  mv -fT "$shared_lock_temporary" "$shared_lock"
+
   flock -u "$BUILD_TOKEN_FD"
   exec {BUILD_TOKEN_FD}>&-
+  flock -u "$PIN_REFRESH_SHARED_FD"
+  exec {PIN_REFRESH_SHARED_FD}>&-
   flock -u "$CONSTRUCTION_FD"
   exec {CONSTRUCTION_FD}>&-
 )

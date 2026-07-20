@@ -17,7 +17,7 @@ claim live-host or stakeholder acceptance.
 | FS-030-HDS-010-SDS-010-SMS-010 | OK | module tests; source copied before mutation, both no-lock-update flags observed, running fixture unchanged during build, and failed final authority check |
 | FS-130-HDS-010-SDS-010-SMS-010 | OK | dispatcher validation is ShellCheck-clean; module tests exercise update and state operations against generated-equivalent configuration |
 | FS-150-HDS-010-SDS-010-SMS-010 | OK | module evaluation proves the default stable socket and rejects a relative endpoint; systemd integration discovers the instance through `vm-list`, attaches through `vm-attach` from a separate tmux client, supplies offline interactive input, observes the exact pane process, retains the endpoint, and verifies stop cleanup |
-| FS-160-HDS-010-SDS-010-SMS-010 | OK | module evaluation proves disabled-by-default policy and rejects an enabled refresh without an approved source; module tests prove isolated lock mutation, refreshed-lock provenance, eligible guest restart, excluded forced rollout, and unchanged-slot host-pinned fallback after update, capture, or construction failure |
+| FS-160-HDS-010-SDS-010-SMS-010 | OK | module evaluation proves disabled-by-default policy, the default `host` lock scope, and rejection of enabled refresh without an approved source; module tests prove isolated source mutation, cross-instance reuse and atomic publication of the shared runtime lock, refreshed-lock provenance, eligible guest restart, excluded forced rollout, and unchanged shared lock plus host-pinned fallback after update, capture, or construction failure |
 | FS-140-HDS-010-SDS-010-SMS-010 | OK | `nix flake check --all-systems`; x86_64 construction checks passed and aarch64 outputs evaluated successfully |
 
 ## Seeded Negatives
@@ -41,5 +41,5 @@ claim live-host or stakeholder acceptance.
 - Build/archive commands lacking the configured immutable paths or lock inputs
   do not reach admission.
 - Failed refreshed-lock update, immutable capture, and construction stages do
-  not admit or prevent startup from the unchanged current image; later stages
-  are not entered after an earlier failure.
+  not admit, publish shared lock state, or prevent startup from the unchanged
+  current image; later stages are not entered after an earlier failure.

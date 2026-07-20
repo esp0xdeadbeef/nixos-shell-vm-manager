@@ -16,6 +16,8 @@ dependency pins and construct a candidate before eligible starts.
 - Baseline images use the consumer host's own pinned dependency graph.
 - Pin refresh is disabled by default; enabled refresh updates only an isolated
   copy and never rewrites the consumer's host-generation lock.
+- Pin-refresh VMs backed by the host flake share the last successfully
+  published runtime lock; custom repositories use a distinct lock scope.
 - Failed pin refresh leaves all admitted slots unchanged and starts the local
   host-pinned image when one is available.
 - A local update snapshots `flake.nix`, `flake.lock`, and source into the Nix
@@ -47,7 +49,11 @@ Import the module and pass direct image derivations. The manager does not need a
 repository URL or knowledge of the consumer's layout:
 
 ```nix
-{ inputs, pkgs, self, ... }:
+{ inputs, lib, pkgs, self, ... }:
+let
+  qgaHealth =
+    inputs.nixos-shell-vm-manager.packages.${pkgs.stdenv.hostPlatform.system}.qga-systemd-health;
+in
 {
   imports = [
     inputs.nixos-shell-vm-manager.nixosModules.default
@@ -65,11 +71,23 @@ repository URL or knowledge of the consumer's layout:
       # runner.relativePath = "bin/run-my-compatible-vm";
 
       healthCheck = {
-        command = "${pkgs.iputils}/bin/ping -c 1 -W 2 my-vm";
+        # This checks the exact guest through QGA. With no guest command,
+        # qga-systemd-health succeeds when systemd has no failed units.
+        command = lib.escapeShellArgs [
+          (lib.getExe qgaHealth)
+          "/run/nixos-shell-vm-manager/my-vm/qga.sock"
+        ];
         timeoutSeconds = 10;
-        retries = 12;
-        intervalSeconds = 5;
+        retries = 60;
+        intervalSeconds = 2;
       };
+
+      runner.qemuArguments = [
+        "-chardev"
+        "socket,id=qga0,path=/run/nixos-shell-vm-manager/my-vm/qga.sock,server=on,wait=off"
+        "-device"
+        "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0"
+      ];
 
       activation = {
         startOnBoot = false;
@@ -88,6 +106,9 @@ repository URL or knowledge of the consumer's layout:
         flake = self.outPath;
         flakeAttribute =
           "nixosConfigurations.my-vm.config.system.build.nixos-shell";
+        # The default "host" scope is shared by host-flake VMs. Set a stable,
+        # distinct name when this VM refreshes a custom repository.
+        lockScope = "host";
       };
 
       # Enabled by default. These are the default values:
@@ -120,15 +141,19 @@ result as a `host-generation` candidate without changing the running VM.
 Set `activation.refreshPins = true` to re-resolve the approved VM flake's
 declared inputs before a boot start, ordinary explicit service start, or
 guest-shutdown restart. The manager copies `pinRefresh.flake` to a private
-writable workspace, updates that copy's `flake.lock`, archives it immutably,
+writable workspace, overlays the last successfully published runtime lock from
+`pinRefresh.lockScope`, updates that copy's `flake.lock`, archives it immutably,
 and builds `pinRefresh.flakeAttribute`. The configured source is retained by the
 host generation and is never modified.
 
 Every eligible start performs `nix flake update --refresh` in that isolated
 copy, so upstream pin changes are picked up without a background timer. The
-resulting image is admitted as a `pin-refresh` candidate with source and lock
-provenance, then uses the normal health-gated promotion and rollback
-transaction.
+default `host` scope is serialized and shared by every host-flake VM on the
+box, so each update starts from the latest successful host lock instead of the
+older lock embedded separately in each host-generation source. A custom flake
+repository must use its own stable scope name. The refreshed lock is published
+atomically only after its VM image is successfully admitted. The resulting
+image uses the normal health-gated promotion and rollback transaction.
 
 Refresh is best effort. Resolution, archive, or build failure leaves all image
 slots unchanged and continues with the locally available host-pinned image.
@@ -149,11 +174,14 @@ For consumers that use a QEMU Guest Agent healthcheck, `qga.sock` is reserved
 inside the per-VM control directory. The manager removes that transient socket
 before launch and after runner exit so a stale endpoint cannot block recovery.
 The flake exports `packages.<system>.qga-systemd-health`, which performs a
-guest-agent ping and then executes a caller-selected command inside that exact
-guest. The helper uses one synchronized QGA connection, so responses buffered
-before guest-agent readiness cannot be mistaken for the current request.
-Promotion follows the guest command's exit status; captured guest stdout and
-stderr are logged when the command fails.
+guest-agent ping and then executes a command inside that exact guest. With only
+the socket argument, its network-independent default succeeds when
+`systemctl list-units --state=failed` is empty. A caller may append a custom
+guest command and arguments when a VM needs a stricter functional check. The
+helper uses one synchronized QGA connection, so responses buffered before
+guest-agent readiness cannot be mistaken for the current request. Promotion
+follows the guest command's exit status; captured guest stdout and stderr are
+logged when the command fails.
 
 The module's `carrierControls` option starts selected instances on carrier-up
 and records the distinct automatic `carrier-down` stop reason before stopping

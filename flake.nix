@@ -299,6 +299,8 @@
               evaluation.config.services.nixosShellVmManager.instances.test-vm.activation.restartOnGuestShutdown;
             assert !evaluation.config.services.nixosShellVmManager.instances.test-vm.activation.refreshPins;
             assert
+              evaluation.config.services.nixosShellVmManager.instances.test-vm.pinRefresh.lockScope == "host";
+            assert
               evaluation.config.services.nixosShellVmManager.instances.test-vm.runner.relativePath
               == "bin/run-compatible-vm";
             assert evaluation.config.services.nixosShellVmManager.instances.test-vm.console.enable;

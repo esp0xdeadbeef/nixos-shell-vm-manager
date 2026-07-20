@@ -1,9 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-socket=${1:?usage: qga-systemd-health SOCKET GUEST-COMMAND [ARG ...]}
-guest_command=${2:?usage: qga-systemd-health SOCKET GUEST-COMMAND [ARG ...]}
-shift 2
+socket=${1:?usage: qga-systemd-health SOCKET [GUEST-COMMAND [ARG ...]]}
+
+if (( $# == 1 )); then
+  guest_command=/run/current-system/sw/bin/bash
+  # shellcheck disable=SC2016 # Expanded by bash inside the guest, not here.
+  guest_arguments=(
+    -c
+    'failed_units=$(/run/current-system/sw/bin/systemctl list-units --state=failed --no-legend --plain --no-pager); if [[ -n "$failed_units" ]]; then printf "%s\n" "$failed_units"; exit 1; fi'
+  )
+else
+  guest_command=$2
+  shift 2
+  guest_arguments=("$@")
+fi
 
 response_timeout_seconds=${QGA_RESPONSE_TIMEOUT_SECONDS:-5}
 if [[ ! $response_timeout_seconds =~ ^[0-9]+([.][0-9]+)?$ ]]; then
@@ -103,7 +114,7 @@ fi
 qga_call '{"execute":"guest-ping"}' >/dev/null
 
 arguments_json='[]'
-for argument in "$@"; do
+for argument in "${guest_arguments[@]}"; do
   arguments_json=$(jq -cn \
     --argjson current "$arguments_json" \
     --arg value "$argument" \
