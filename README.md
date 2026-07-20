@@ -56,6 +56,9 @@ repository URL or knowledge of the consumer's layout:
       image =
         self.nixosConfigurations.my-vm.config.system.build.nixos-shell;
 
+      # Optional compatibility override when the image uses another runner name.
+      # runner.relativePath = "bin/run-my-compatible-vm";
+
       healthCheck = {
         command = "${pkgs.iputils}/bin/ping -c 1 -W 2 my-vm";
         timeoutSeconds = 10;
@@ -91,6 +94,11 @@ healthCheck.command = ''
   ${pkgs.curl}/bin/curl --fail http://my-vm:8080/health
 '';
 ```
+
+`runner.relativePath` defaults to `bin/run-<instance-name>-vm`. It may be set to
+another safe relative path when a flake configuration intentionally retains a
+different guest or runner name. Absolute paths and `..` path segments are
+rejected during module evaluation.
 
 ## Lifecycle
 

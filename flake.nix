@@ -39,6 +39,7 @@
                 instances.test-vm = {
                   image = fakeImage pkgs "test-vm" "baseline";
                   healthCheck.command = "test -e /run/test-vm/healthy";
+                  runner.relativePath = "bin/run-compatible-vm";
                 };
               };
             }
@@ -98,18 +99,42 @@
               }
             ];
           };
+          invalidRunnerPath = lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                system.stateVersion = "26.05";
+                services.nixosShellVmManager = {
+                  enable = true;
+                  instances.invalid = {
+                    image = fakeImage pkgs "invalid" "baseline";
+                    healthCheck.command = "true";
+                    runner.relativePath = "bin/../run-invalid-vm";
+                  };
+                };
+              }
+            ];
+          };
           contradictionResult = builtins.tryEval (
             builtins.deepSeq invalidContradiction.config.system.build.toplevel true
           );
           jitterResult = builtins.tryEval (builtins.deepSeq invalidJitter.config.system.build.toplevel true);
+          runnerPathResult = builtins.tryEval (
+            builtins.deepSeq invalidRunnerPath.config.system.build.toplevel true
+          );
         in
         {
           module-evaluation =
             assert evaluation.config.systemd.services.test-vm-vm.serviceConfig.Restart == "no";
             assert !evaluation.config.services.nixosShellVmManager.instances.test-vm.activation.startOnBoot;
+            assert
+              evaluation.config.services.nixosShellVmManager.instances.test-vm.runner.relativePath
+              == "bin/run-compatible-vm";
             assert evaluation.config.system.extraDependencies != [ ];
             assert !contradictionResult.success;
             assert !jitterResult.success;
+            assert !runnerPathResult.success;
             pkgs.runCommand "nixos-shell-vm-manager-module-evaluation" { } ''
               touch "$out"
             '';

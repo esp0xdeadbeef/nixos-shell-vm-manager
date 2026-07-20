@@ -3,19 +3,21 @@
   self,
 }:
 let
-  makeImage =
-    name: label:
+  makeImageAt =
+    name: runnerName: label:
     pkgs.runCommand "${name}-${label}-image" { } ''
       mkdir -p "$out/bin"
-      cp ${./fake-runner.sh} "$out/bin/run-${name}-vm"
-      chmod +x "$out/bin/run-${name}-vm"
-      substituteInPlace "$out/bin/run-${name}-vm" --replace-fail '@LABEL@' '${label}'
-      patchShebangs "$out/bin/run-${name}-vm"
+      cp ${./fake-runner.sh} "$out/bin/run-${runnerName}-vm"
+      chmod +x "$out/bin/run-${runnerName}-vm"
+      substituteInPlace "$out/bin/run-${runnerName}-vm" --replace-fail '@LABEL@' '${label}'
+      patchShebangs "$out/bin/run-${runnerName}-vm"
     '';
+  makeImage = name: label: makeImageAt name name label;
   baseline = makeImage "test-vm" "baseline";
   good = makeImage "test-vm" "good";
   bad = makeImage "test-vm" "bad";
   guestCandidate = makeImage "test-vm" "guest-candidate";
+  compatibleBaseline = makeImageAt "alias-vm" "compatible" "compatible-baseline";
 in
 pkgs.testers.runNixOSTest {
   name = "nixos-shell-vm-manager-systemd";
@@ -49,6 +51,19 @@ pkgs.testers.runNixOSTest {
           intervalSeconds = 0;
         };
         runner.stopGraceSeconds = 1;
+      };
+      instances.alias-vm = {
+        image = compatibleBaseline;
+        healthCheck = {
+          command = "test $(cat /run/fake-vm/active) = compatible-baseline";
+          timeoutSeconds = 1;
+          retries = 3;
+          intervalSeconds = 0;
+        };
+        runner = {
+          relativePath = "bin/run-compatible-vm";
+          stopGraceSeconds = 1;
+        };
       };
     };
   };
@@ -97,5 +112,12 @@ pkgs.testers.runNixOSTest {
 
     machine.succeed("test $(cat /var/lib/nixos-shell-vm-manager/persistent/test-vm/marker) = durable")
     machine.succeed("systemctl stop test-vm-vm.service")
+
+    # A configuration name may intentionally use a compatible runner name.
+    machine.fail("systemctl is-active --quiet alias-vm-vm.service")
+    machine.succeed("systemctl start alias-vm-vm.service")
+    machine.wait_until_succeeds("test $(jq -r .current.image /var/lib/nixos-shell-vm-manager/alias-vm/state.json) = ${compatibleBaseline}")
+    machine.succeed("test $(cat /run/fake-vm/active) = compatible-baseline")
+    machine.succeed("systemctl stop alias-vm-vm.service")
   '';
 }

@@ -72,7 +72,7 @@ let
 
       image = mkOption {
         type = types.package;
-        description = "Consumer-built baseline containing bin/run-${name}-vm.";
+        description = "Consumer-built baseline containing the configured VM runner.";
       };
 
       localFlakeAttribute = mkOption {
@@ -160,6 +160,11 @@ let
       };
 
       runner = {
+        relativePath = mkOption {
+          type = types.str;
+          default = "bin/run-${name}-vm";
+          description = "Safe relative path to the executable runner inside the image output.";
+        };
         arguments = mkOption {
           type = types.listOf types.str;
           default = [ ];
@@ -191,7 +196,7 @@ let
       LOCK_DIR=${escapeShellArg "${cfg.lockDirectory}/${name}"}
       BUILD_TOKEN_DIRECTORY=${escapeShellArg "${cfg.lockDirectory}/build-tokens"}
       MAX_CONCURRENT_BUILDS=${toString cfg.maxConcurrentBuilds}
-      RUNNER_RELATIVE_PATH=${escapeShellArg "bin/run-${name}-vm"}
+      RUNNER_RELATIVE_PATH=${escapeShellArg instance.runner.relativePath}
       RUNNER_ARGUMENTS_JSON=${escapeShellArg (builtins.toJSON instance.runner.arguments)}
       QEMU_ARGUMENTS_JSON=${escapeShellArg (builtins.toJSON instance.runner.qemuArguments)}
       HEALTH_COMMAND=${escapeShellArg instance.healthCheck.command}
@@ -250,6 +255,12 @@ let
       {
         assertion = instance.localFlakeAttribute != "";
         message = "${name}: localFlakeAttribute must not be empty";
+      }
+      {
+        assertion =
+          builtins.match "^[A-Za-z0-9._+-]+(/[A-Za-z0-9._+-]+)*$" instance.runner.relativePath != null
+          && !(lib.elem ".." (lib.splitString "/" instance.runner.relativePath));
+        message = "${name}: runner.relativePath must be a safe relative path without '..' segments";
       }
     ]) instances
   );
