@@ -93,7 +93,7 @@ pkgs.testers.runNixOSTest {
         image = refreshBaseline;
         activation.refreshPins = true;
         pinRefresh = {
-          flake = refreshFlake;
+          flakeRef = "path:${refreshFlake}";
           flakeAttribute = "packages.x86_64-linux.refresh-vm";
         };
         healthCheck = {

@@ -45,8 +45,9 @@ Pin this repository as a normal consumer input:
 }
 ```
 
-Import the module and pass direct image derivations. The manager does not need a
-repository URL or knowledge of the consumer's layout:
+Import the module and pass direct image derivations. Normal host-pinned startup
+does not need a repository URL or knowledge of the consumer's layout. Optional
+online pin refresh accepts one opaque, revision-pinned flake reference:
 
 ```nix
 { inputs, lib, pkgs, self, ... }:
@@ -103,7 +104,7 @@ in
 
       # Required only when activation.refreshPins is enabled.
       pinRefresh = {
-        flake = self.outPath;
+        flakeRef = "github:example/consumer/${self.rev}";
         flakeAttribute =
           "nixosConfigurations.my-vm.config.system.build.nixos-shell";
         # The default "host" scope is shared by host-flake VMs. Set a stable,
@@ -140,11 +141,13 @@ result as a `host-generation` candidate without changing the running VM.
 
 Set `activation.refreshPins = true` to re-resolve the approved VM flake's
 declared inputs before a boot start, ordinary explicit service start, or
-guest-shutdown restart. The manager copies `pinRefresh.flake` to a private
-writable workspace, overlays the last successfully published runtime lock from
-`pinRefresh.lockScope`, updates that copy's `flake.lock`, archives it immutably,
-and builds `pinRefresh.flakeAttribute`. The configured source is retained by the
-host generation and is never modified.
+guest-shutdown restart. The manager first archives `pinRefresh.flakeRef`, copies
+that immutable result to a private writable workspace, overlays the last
+successfully published runtime lock from `pinRefresh.lockScope`, updates that
+copy's `flake.lock`, archives it immutably, and builds
+`pinRefresh.flakeAttribute`. Prefer a revision-pinned remote reference so the
+approved source is reproducible without making the complete consumer repository
+a host-generation dependency.
 
 Every eligible start performs `nix flake update --refresh` in that isolated
 copy, so upstream pin changes are picked up without a background timer. The

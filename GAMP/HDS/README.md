@@ -39,9 +39,10 @@ The corresponding controlled fullspec is named
 
 The consumer flake designates hosts and supplies complete image derivations.
 The initial authorized HAT host is `s-tau`; no design depends on that hostname.
-Images, manager executables, health commands, runner closures, and any approved
-pin-refresh source are retained by the host generation. Runtime startup consumes
-local objects only unless a VM explicitly enables online pin refresh; refresh
+Images, manager executables, health commands, and runner closures are retained
+by the host generation. Runtime startup consumes local objects only unless a VM
+explicitly enables online pin refresh. Such a VM supplies an approved flake
+reference that is resolved into an immutable archive at refresh time; refresh
 failure retains the local host-pinned startup path.
 
 A host may obtain external connectivity from a managed VM. That VM's cold-boot

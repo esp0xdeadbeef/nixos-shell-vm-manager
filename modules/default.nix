@@ -96,10 +96,13 @@ let
       };
 
       pinRefresh = {
-        flake = mkOption {
-          type = types.nullOr types.path;
+        flakeRef = mkOption {
+          type = types.nullOr types.str;
           default = null;
-          description = "Immutable approved VM flake copied before an enabled pin refresh.";
+          description = ''
+            Approved flake reference archived immutably at runtime before an
+            enabled pin refresh. Prefer a revision-pinned remote reference.
+          '';
         };
         flakeAttribute = mkOption {
           type = types.str;
@@ -302,10 +305,8 @@ let
       ROLLOUT_CANDIDATE_ON_GUEST_SHUTDOWN=${bool instance.activation.rolloutCandidateOnGuestShutdown}
       USE_CANDIDATE_ON_EXPLICIT_START=${bool instance.activation.useCandidateOnExplicitStart}
       REFRESH_PINS=${bool instance.activation.refreshPins}
-      PIN_REFRESH_FLAKE=${
-        escapeShellArg (
-          if instance.pinRefresh.flake == null then "" else toString instance.pinRefresh.flake
-        )
+      PIN_REFRESH_FLAKE_REF=${
+        escapeShellArg (if instance.pinRefresh.flakeRef == null then "" else instance.pinRefresh.flakeRef)
       }
       PIN_REFRESH_FLAKE_ATTRIBUTE=${escapeShellArg instance.pinRefresh.flakeAttribute}
       PIN_REFRESH_LOCK_SCOPE=${escapeShellArg instance.pinRefresh.lockScope}
@@ -362,21 +363,16 @@ let
         message = "${name}: localFlakeAttribute must not be empty";
       }
       {
-        assertion = !instance.activation.refreshPins || instance.pinRefresh.flake != null;
-        message = "${name}: activation.refreshPins requires pinRefresh.flake";
+        assertion = !instance.activation.refreshPins || instance.pinRefresh.flakeRef != null;
+        message = "${name}: activation.refreshPins requires pinRefresh.flakeRef";
       }
       {
         assertion = instance.pinRefresh.flakeAttribute != "";
         message = "${name}: pinRefresh.flakeAttribute must not be empty";
       }
       {
-        assertion =
-          instance.pinRefresh.flake == null
-          || (
-            builtins.pathExists "${instance.pinRefresh.flake}/flake.nix"
-            && builtins.pathExists "${instance.pinRefresh.flake}/flake.lock"
-          );
-        message = "${name}: pinRefresh.flake must contain flake.nix and flake.lock";
+        assertion = instance.pinRefresh.flakeRef == null || instance.pinRefresh.flakeRef != "";
+        message = "${name}: pinRefresh.flakeRef must not be empty";
       }
       {
         assertion =
@@ -580,11 +576,7 @@ in
       }
     ) instanceConfigs;
 
-    system.extraDependencies =
-      mapAttrsToList (_: instance: instance.image) instances
-      ++ lib.filter (source: source != null) (
-        mapAttrsToList (_: instance: instance.pinRefresh.flake) instances
-      );
+    system.extraDependencies = mapAttrsToList (_: instance: instance.image) instances;
 
     system.activationScripts.nixosShellVmManager = {
       deps = [ "etc" ];

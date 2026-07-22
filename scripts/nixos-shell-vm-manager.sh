@@ -865,10 +865,7 @@ construct_pin_refresh_candidate() (
   local config=$1
   load_config "$config"
   require_mutation_authority
-  [[ -n ${PIN_REFRESH_FLAKE:-} ]] || die "$VM_NAME has no approved pin-refresh flake"
-  [[ -d "$PIN_REFRESH_FLAKE" ]] || die "pin-refresh flake does not exist: $PIN_REFRESH_FLAKE"
-  [[ -f "$PIN_REFRESH_FLAKE/flake.nix" ]] || die "pin-refresh source lacks flake.nix"
-  [[ -f "$PIN_REFRESH_FLAKE/flake.lock" ]] || die "pin-refresh source lacks flake.lock"
+  [[ -n ${PIN_REFRESH_FLAKE_REF:-} ]] || die "$VM_NAME has no approved pin-refresh flake reference"
 
   ensure_directories
   exec {CONSTRUCTION_FD}>"$LOCK_DIR/construction.lock"
@@ -877,7 +874,18 @@ construct_pin_refresh_candidate() (
   flock "$PIN_REFRESH_SHARED_FD"
   acquire_build_token
 
-  local workspace shared_lock
+  local approved_archive_json approved_archive workspace shared_lock
+  approved_archive_json=$("$NIX_BIN" flake archive --json --no-update-lock-file \
+    --no-write-lock-file "$PIN_REFRESH_FLAKE_REF")
+  approved_archive=$(jq -r '.path // empty' <<<"$approved_archive_json")
+  if [[ ${REQUIRE_STORE_IMAGES:-1} == 1 ]]; then
+    [[ "$approved_archive" == /nix/store/* ]] || die "Nix did not return an immutable approved source archive"
+  else
+    [[ -d "$approved_archive" ]] || die "test approved source archive does not exist"
+  fi
+  [[ -f "$approved_archive/flake.nix" ]] || die "approved pin-refresh source lacks flake.nix"
+  [[ -f "$approved_archive/flake.lock" ]] || die "approved pin-refresh source lacks flake.lock"
+
   workspace=$(mktemp -d "$RUNTIME_DIR/.pin-refresh.XXXXXX")
   shared_lock="$PIN_REFRESH_SHARED_DIRECTORY/$PIN_REFRESH_LOCK_SCOPE.flake.lock"
   # Invoked indirectly by the EXIT trap below.
@@ -887,7 +895,7 @@ construct_pin_refresh_candidate() (
   }
   trap cleanup_pin_refresh_workspace EXIT
 
-  cp -a -- "$PIN_REFRESH_FLAKE/." "$workspace/"
+  cp -a -- "$approved_archive/." "$workspace/"
   chmod -R u+w -- "$workspace"
   if [[ -f "$shared_lock" ]]; then
     cp -- "$shared_lock" "$workspace/flake.lock"

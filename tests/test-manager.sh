@@ -79,7 +79,9 @@ case "${1:-}:${2:-}" in
   flake:archive)
     source_ref=${*: -1}
     source_path=${source_ref#path:}
-    if [[ "$source_path" == *'/.pin-refresh.'* ]]; then
+    if [[ -n ${FAKE_PIN_SOURCE:-} && "$source_path" == "$FAKE_PIN_SOURCE" ]]; then
+      jq -cn --arg path "$source_path" '{path:$path}'
+    elif [[ "$source_path" == *'/.pin-refresh.'* ]]; then
       if [[ -e '@FAKE_ARCHIVE_FAILURE@' ]]; then
         exit 1
       fi
@@ -145,7 +147,7 @@ RESTART_ON_GUEST_SHUTDOWN=1
 ROLLOUT_CANDIDATE_ON_GUEST_SHUTDOWN=1
 USE_CANDIDATE_ON_EXPLICIT_START=1
 REFRESH_PINS=0
-PIN_REFRESH_FLAKE='$pin_source'
+PIN_REFRESH_FLAKE_REF='path:$pin_source'
 PIN_REFRESH_FLAKE_ATTRIBUTE='packages.test-vm'
 PIN_REFRESH_LOCK_SCOPE='host'
 JITTER_MIN_SECONDS=0
@@ -303,6 +305,7 @@ bash "$manager" prepare-start "$config" || prepare_status=$?
 # isolated copy, admits refreshed provenance, and promotes the complete output.
 export FAKE_PIN_ARCHIVE="$test_root/pin-archive"
 export FAKE_PIN_BUILD_OUTPUT_FILE="$test_root/pin-build-output"
+export FAKE_PIN_SOURCE="$pin_source"
 printf '%s\n' "$host_new" >"$FAKE_PIN_BUILD_OUTPUT_FILE"
 export FAKE_REFRESH_LOCK_BEFORE="$test_root/refresh-lock-before"
 export FAKE_REFRESH_READY="$test_root/refresh-ready"
@@ -323,7 +326,8 @@ wait_for 'pin-refresh promotion' "test \"\$(jq -r .current.image '$test_root/sta
 expected_lock_identity="sha256:$(sha256sum "$FAKE_PIN_ARCHIVE/flake.lock" | cut -d ' ' -f 1)"
 [[ $(jq -r '.current.lockIdentity' "$test_root/state/state.json") == "$expected_lock_identity" ]]
 grep -q '^flake update --refresh --flake path:' "$FAKE_NIX_LOG"
-grep -q '^flake archive --json --no-update-lock-file --no-write-lock-file path:' "$FAKE_NIX_LOG"
+grep -q "^flake archive --json --no-update-lock-file --no-write-lock-file path:$pin_source" "$FAKE_NIX_LOG"
+grep -q '^flake archive --json --no-update-lock-file --no-write-lock-file path:.*/\.pin-refresh\.' "$FAKE_NIX_LOG"
 grep -q '^build --no-link --print-out-paths --no-update-lock-file --no-write-lock-file path:' "$FAKE_NIX_LOG"
 
 # A different VM in the same host scope starts from the lock published above,
@@ -358,7 +362,7 @@ wait_for 'failed-refresh fallback' "test \"\$(cat '$observation/active' 2>/dev/n
 [[ $(jq -r '.current.image' "$test_root/state/state.json") == "$host_new" ]]
 [[ $(jq -r '.candidate' "$test_root/state/state.json") == null ]]
 grep -q '^flake update --refresh --flake path:' "$FAKE_NIX_LOG"
-if grep -q '^flake archive ' "$FAKE_NIX_LOG"; then
+if [[ $(grep -c '^flake archive ' "$FAKE_NIX_LOG") -ne 1 ]]; then
   exit 1
 fi
 
