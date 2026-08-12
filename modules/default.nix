@@ -293,6 +293,7 @@ let
       PIN_REFRESH_SHARED_DIRECTORY=${escapeShellArg "${cfg.stateDirectory}/pin-refresh-locks"}
       PIN_REFRESH_SHARED_LOCK_DIRECTORY=${escapeShellArg "${cfg.lockDirectory}/pin-refresh-locks"}
       MAX_CONCURRENT_BUILDS=${toString cfg.maxConcurrentBuilds}
+      MAX_BUILD_JOBS=${toString cfg.maxBuildJobs}
       RUNNER_RELATIVE_PATH=${escapeShellArg instance.runner.relativePath}
       RUNNER_ARGUMENTS_JSON=${escapeShellArg (builtins.toJSON instance.runner.arguments)}
       QEMU_ARGUMENTS_JSON=${escapeShellArg (builtins.toJSON instance.runner.qemuArguments)}
@@ -511,6 +512,15 @@ in
       type = types.ints.positive;
       default = 1;
       description = "Maximum concurrent local candidate builds across VMs.";
+    };
+
+    maxBuildJobs = mkOption {
+      type = types.ints.unsigned;
+      default = 0;
+      description = ''
+        Number of parallel build jobs passed to nix build (--max-jobs).
+        Set to 0 to auto-detect the host CPU thread count at runtime.
+      '';
     };
 
     stateDirectory = mkOption {

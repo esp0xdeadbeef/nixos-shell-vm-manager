@@ -73,6 +73,10 @@ load_config() {
   : "${REFRESH_PINS:?}" "${PIN_REFRESH_FLAKE_ATTRIBUTE:?}"
   : "${PIN_REFRESH_SHARED_DIRECTORY:?}" "${PIN_REFRESH_SHARED_LOCK_DIRECTORY:?}"
   : "${PIN_REFRESH_LOCK_SCOPE:?}"
+  : "${MAX_BUILD_JOBS:=0}"
+  if [[ $MAX_BUILD_JOBS -eq 0 ]]; then
+    MAX_BUILD_JOBS=$(nproc)
+  fi
   valid_vm_name "$VM_NAME" || die "invalid configured VM name: $VM_NAME"
   [[ "$PIN_REFRESH_LOCK_SCOPE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || \
     die "invalid pin-refresh lock scope: $PIN_REFRESH_LOCK_SCOPE"
@@ -917,6 +921,7 @@ construct_pin_refresh_candidate() (
 
   output_lines=$("$NIX_BIN" build --no-link --print-out-paths \
     --no-update-lock-file --no-write-lock-file \
+    --max-jobs "$MAX_BUILD_JOBS" \
     "path:$archive#$PIN_REFRESH_FLAKE_ATTRIBUTE")
   if [[ $(grep -c . <<<"$output_lines") -ne 1 ]]; then
     die "pin-refresh image build returned an unexpected number of outputs"
@@ -1017,6 +1022,7 @@ update_from_local_flake() {
 
   output_lines=$("$NIX_BIN" build --no-link --print-out-paths \
     --no-update-lock-file --no-write-lock-file \
+    --max-jobs "$MAX_BUILD_JOBS" \
     "path:$archive#$LOCAL_FLAKE_ATTRIBUTE")
   if [[ $(grep -c . <<<"$output_lines") -ne 1 ]]; then
     die "local image build returned an unexpected number of outputs"

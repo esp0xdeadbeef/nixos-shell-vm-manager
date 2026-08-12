@@ -135,6 +135,7 @@ BUILD_TOKEN_DIRECTORY='$test_root/locks/tokens'
 PIN_REFRESH_SHARED_DIRECTORY='$test_root/shared-pin-refresh'
 PIN_REFRESH_SHARED_LOCK_DIRECTORY='$test_root/locks/shared-pin-refresh'
 MAX_CONCURRENT_BUILDS=1
+MAX_BUILD_JOBS=1
 RUNNER_RELATIVE_PATH='bin/run-test-vm-vm'
 RUNNER_ARGUMENTS_JSON='[]'
 QEMU_ARGUMENTS_JSON='[]'
@@ -328,7 +329,7 @@ expected_lock_identity="sha256:$(sha256sum "$FAKE_PIN_ARCHIVE/flake.lock" | cut 
 grep -q '^flake update --refresh --flake path:' "$FAKE_NIX_LOG"
 grep -q "^flake archive --json --no-update-lock-file --no-write-lock-file path:$pin_source" "$FAKE_NIX_LOG"
 grep -q '^flake archive --json --no-update-lock-file --no-write-lock-file path:.*/\.pin-refresh\.' "$FAKE_NIX_LOG"
-grep -q '^build --no-link --print-out-paths --no-update-lock-file --no-write-lock-file path:' "$FAKE_NIX_LOG"
+grep -q '^build --no-link --print-out-paths --no-update-lock-file --no-write-lock-file --max-jobs 1 path:' "$FAKE_NIX_LOG"
 
 # A different VM in the same host scope starts from the lock published above,
 # rather than from the older lock retained in its immutable host source.
