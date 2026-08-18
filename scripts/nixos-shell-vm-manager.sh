@@ -11,6 +11,15 @@ die() {
   exit 1
 }
 
+# Polling and delay sleeps must tolerate a stray SIGTERM (e.g. `pkill sleep`):
+# under `set -e` a killed `sleep` would exit the supervisor, and systemd would
+# then SIGKILL the remaining cgroup members - i.e. the QEMU runner (the VM),
+# taking its network down with it. Treat an interrupted sleep as "interval
+# elapsed" instead.
+poll_sleep() {
+  sleep "$@" || true
+}
+
 usage() {
   cat >&2 <<'EOF'
 operator commands (use the instance name, without the -vm.service suffix):
@@ -521,7 +530,7 @@ stop_child() {
   kill -TERM "$child_pid" 2>/dev/null || true
   local count=0
   while runner_is_alive "$child_pid" && (( count < STOP_GRACE_SECONDS * 10 )); do
-    sleep 0.1
+    poll_sleep 0.1
     count=$((count + 1))
   done
   if runner_is_alive "$child_pid"; then
@@ -597,7 +606,7 @@ health_check_unlocked() {
       return 0
     fi
     if (( attempt < HEALTH_RETRIES )); then
-      sleep "$HEALTH_INTERVAL_SECONDS"
+      poll_sleep "$HEALTH_INTERVAL_SECONDS"
     fi
     attempt=$((attempt + 1))
   done
@@ -791,7 +800,7 @@ supervise() {
     child_status=0
     if [[ "$CONSOLE_ENABLE" == 1 ]]; then
       while runner_is_alive "$active_pid"; do
-        sleep 0.2
+        poll_sleep 0.2
       done
       child_status=$(console_exit_status)
       cleanup_console
@@ -830,7 +839,7 @@ supervise() {
     local delay
     delay=$(random_jitter "$JITTER_MIN_SECONDS" "$JITTER_MAX_SECONDS")
     printf '%s: guest stopped; restarting after %s seconds\n' "$VM_NAME" "$delay"
-    sleep "$delay"
+    poll_sleep "$delay"
     if ! preauthorize_restart_event guest-shutdown; then
       printf '%s: guest restart revoked by explicit stop\n' "$VM_NAME" >&2
       return "$RESTART_BLOCKED_EXIT"
@@ -853,7 +862,7 @@ acquire_build_token() {
       fi
       exec {candidate_fd}>&-
     done
-    sleep 0.2
+    poll_sleep 0.2
   done
 }
 
