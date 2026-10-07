@@ -51,6 +51,25 @@ let
     text = builtins.readFile ../scripts/carrier-watcher.sh;
   };
 
+  # Runs an arbitrary command inside a running VM through its QEMU guest agent.
+  # Shared by the functional health check (owner-provided) and the operator
+  # `vm-exec` command, so operators never hand-roll QGA/socat plumbing.
+  qgaExec = pkgs.writeShellApplication {
+    name = "nixos-shell-vm-qga-exec";
+    runtimeInputs = with pkgs; [
+      coreutils
+      gnugrep
+      jq
+      socat
+    ];
+    text = ''
+      export QGA_CLIENT_LIBRARY=${
+        pkgs.writeText "qga-client.sh" (builtins.readFile ../scripts/qga-client.sh)
+      }
+      ${builtins.readFile ../scripts/qga-exec.sh}
+    '';
+  };
+
   operatorPackage = pkgs.symlinkJoin {
     name = "nixos-shell-vm-manager-operator-commands";
     paths =
@@ -64,6 +83,7 @@ let
         )
         [
           "vm-attach"
+          "vm-exec"
           "vm-list"
           "vm-update"
           "vm-rollout"
@@ -322,6 +342,7 @@ let
       CONSOLE_ENABLE=${bool instance.console.enable}
       CONSOLE_SOCKET=${escapeShellArg instance.console.socketPath}
       CONSOLE_SESSION=${escapeShellArg instance.console.sessionName}
+      QGA_EXEC_BIN=${escapeShellArg (lib.getExe qgaExec)}
       LOCAL_FLAKE_ATTRIBUTE=${escapeShellArg instance.localFlakeAttribute}
       SYSTEMD_UNIT=${escapeShellArg "${name}-vm.service"}
       SYSTEMCTL_BIN=${escapeShellArg "${pkgs.systemd}/bin/systemctl"}

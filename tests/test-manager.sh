@@ -162,6 +162,7 @@ STOP_GRACE_SECONDS=1
 CONSOLE_ENABLE=0
 CONSOLE_SOCKET='$test_root/console/test-vm.tmux'
 CONSOLE_SESSION='vm'
+QGA_EXEC_BIN='$test_root/qga-exec'
 LOCAL_FLAKE_ATTRIBUTE='packages.test-vm'
 SYSTEMD_UNIT='test-vm-vm.service'
 SYSTEMCTL_BIN='$fake_systemctl'
@@ -174,15 +175,58 @@ export TEST_OBSERVATION_DIR=$observation
 export FAKE_SYSTEMCTL_LOG="$test_root/systemctl.log"
 : >"$FAKE_SYSTEMCTL_LOG"
 
+# vm-exec forwards to the QGA exec helper. Install a stand-in that records its
+# arguments so the dispatch boundary can be asserted without a real guest.
+cat >"$test_root/qga-exec" <<EOF
+#!$(command -v bash)
+set -euo pipefail
+printf '%s\n' "\$@" >"\$QGA_EXEC_LOG"
+exit "\${QGA_EXEC_STATUS:-0}"
+EOF
+chmod +x "$test_root/qga-exec"
+export QGA_EXEC_LOG="$test_root/qga-exec.log"
+: >"$QGA_EXEC_LOG"
+
 # Public help identifies the operator wrappers, and attach fails clearly when
 # the per-VM console has been explicitly disabled.
 bash "$manager" --help >"$test_root/help.out" 2>&1
 grep -q '^  vm-attach VM$' "$test_root/help.out"
+grep -q '^  vm-exec VM COMMAND \[ARG \.\.\.\]$' "$test_root/help.out"
 if bash "$manager" attach "$config" >"$test_root/attach.out" 2>"$test_root/attach.err"; then
   exit 1
 fi
 grep -q 'console.enable = false' "$test_root/attach.err"
 [[ $(bash "$manager" dispatch-list "$test_root") == test-vm ]]
+
+# vm-exec resolves the VM name to its configuration and forwards the guest
+# command to the QGA helper over the control socket. It must fail clearly when
+# no guest agent socket is live, and otherwise preserve the helper's exit code.
+if bash "$manager" dispatch-exec "$test_root" test-vm true >/dev/null 2>"$test_root/exec-missing.err"; then
+  exit 1
+fi
+grep -q 'guest-agent socket is not active' "$test_root/exec-missing.err"
+if bash "$manager" dispatch-exec "$test_root" unmanaged true >/dev/null 2>&1; then
+  exit 1
+fi
+mkdir -p "$test_root/control"
+rm -f "$test_root/control/qga.sock"
+socat "UNIX-LISTEN:$test_root/control/qga.sock,fork" /dev/null &
+qga_listener_pid=$!
+trap 'kill "$qga_listener_pid" 2>/dev/null || true; cleanup' EXIT
+for _ in $(seq 1 100); do
+  [[ -S "$test_root/control/qga.sock" ]] && break
+  sleep 0.01
+done
+bash "$manager" dispatch-exec "$test_root" test-vm /run/current-system/sw/bin/systemctl status container@core.service --no-pager
+mapfile -t exec_arguments <"$QGA_EXEC_LOG"
+[[ ${exec_arguments[0]} == "$test_root/control/qga.sock" ]]
+[[ ${exec_arguments[1]} == /run/current-system/sw/bin/systemctl ]]
+[[ ${exec_arguments[2]} == status ]]
+[[ ${exec_arguments[3]} == 'container@core.service' ]]
+[[ ${exec_arguments[4]} == --no-pager ]]
+kill "$qga_listener_pid" 2>/dev/null || true
+wait "$qga_listener_pid" 2>/dev/null || true
+trap cleanup EXIT
 
 # systemd invokes ExecStop after a main process exits naturally with no live
 # MAINPID. That cleanup path must not fabricate explicit stop authority.

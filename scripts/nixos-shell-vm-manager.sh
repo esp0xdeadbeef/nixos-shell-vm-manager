@@ -26,6 +26,7 @@ operator commands (use the instance name, without the -vm.service suffix):
   vm-list
   vm-status VM
   vm-attach VM
+  vm-exec VM COMMAND [ARG ...]
   vm-update VM LOCAL_FLAKE
   vm-rollout VM
   systemctl start|stop VM-vm.service
@@ -50,6 +51,7 @@ internal usage:
   nixos-shell-vm-manager dispatch-status CONFIG_DIR VM
   nixos-shell-vm-manager dispatch-attach CONFIG_DIR VM
   nixos-shell-vm-manager dispatch-list CONFIG_DIR
+  nixos-shell-vm-manager dispatch-exec CONFIG_DIR VM COMMAND [ARG ...]
 EOF
   exit "${1:-64}"
 }
@@ -79,6 +81,7 @@ load_config() {
   : "${GC_ROOT_DIR:?}" "${CONTROL_DIR:?}" "${LOCK_DIR:?}"
   : "${RUNNER_RELATIVE_PATH:?}" "${HEALTH_COMMAND:?}" "${SYSTEMD_UNIT:?}"
   : "${CONSOLE_ENABLE:?}" "${CONSOLE_SOCKET:?}" "${CONSOLE_SESSION:?}"
+  : "${QGA_EXEC_BIN:?}"
   : "${REFRESH_PINS:?}" "${PIN_REFRESH_FLAKE_ATTRIBUTE:?}"
   : "${PIN_REFRESH_SHARED_DIRECTORY:?}" "${PIN_REFRESH_SHARED_LOCK_DIRECTORY:?}"
   : "${PIN_REFRESH_LOCK_SCOPE:?}"
@@ -1087,6 +1090,22 @@ attach_console() {
   exec env -u TMUX tmux -S "$CONSOLE_SOCKET" attach-session -t "$CONSOLE_SESSION"
 }
 
+# Run a command inside the running guest over its QEMU guest agent. Guest
+# stdout/stderr are forwarded, and the guest exit status is preserved so this
+# is a drop-in replacement for hand-written QGA/socat helpers.
+exec_guest() {
+  local config=$1
+  shift
+  load_config "$config"
+  if (( $# == 0 )); then
+    die "vm-exec requires a guest command: vm-exec $VM_NAME COMMAND [ARG ...]"
+  fi
+  local socket="$CONTROL_DIR/qga.sock"
+  [[ -S "$socket" ]] || die \
+    "$VM_NAME guest-agent socket is not active; start the VM service first"
+  "$QGA_EXEC_BIN" "$socket" "$@"
+}
+
 dispatch_update() {
   [[ $# -eq 3 ]] || usage
   local config
@@ -1113,6 +1132,14 @@ dispatch_attach() {
   local config
   config=$(config_for_name "$1" "$2")
   attach_console "$config"
+}
+
+dispatch_exec() {
+  [[ $# -ge 3 ]] || usage
+  local config
+  config=$(config_for_name "$1" "$2")
+  shift 2
+  exec_guest "$config" "$@"
 }
 
 dispatch_list() {
@@ -1147,6 +1174,7 @@ case "$command_name" in
   dispatch-rollout) dispatch_rollout "$@" ;;
   dispatch-status) dispatch_status "$@" ;;
   dispatch-attach) dispatch_attach "$@" ;;
+  dispatch-exec) dispatch_exec "$@" ;;
   dispatch-list) dispatch_list "$@" ;;
   *) usage ;;
 esac

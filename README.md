@@ -290,6 +290,33 @@ The new console is created on the next guest-shutdown recovery or deliberate
 service stop/start; do not restart solely to obtain it when downtime is
 unacceptable.
 
+## Guest commands
+
+`vm-exec` runs a command inside a running VM over its QEMU guest agent and
+forwards the guest's stdout, stderr, and exit status. This replaces the
+ad-hoc `socat`/QGA helper scripts that would otherwise be rewritten for every
+debugging session:
+
+```console
+sudo vm-exec my-vm systemctl status container@core.service --no-pager -l
+sudo vm-exec my-vm journalctl -u container@core.service -n 50 --no-pager
+sudo vm-exec my-vm ip link del dev cor-cbcoru-913
+```
+
+Arguments after the VM name are passed to the guest verbatim; no shell quoting
+crosses the host/guest boundary. If a shell is needed, ask the guest for one
+explicitly:
+
+```console
+sudo vm-exec my-vm /run/current-system/sw/bin/bash -c 'systemctl list-units --state=failed'
+```
+
+The command runs only while the VM service is active and its guest agent socket
+exists. The guest exit status becomes the exit status of `vm-exec`, so it can
+be used in scripts and `if` conditions. This is the same path the autonomous
+`healthCheck` uses, exposed for operators. The underlying helper is also
+available as `packages.<system>.qga-exec` for consumers that need it directly.
+
 ## Operator commands
 
 First list the configured instance names:
@@ -308,6 +335,7 @@ service `s-test-l-esp-vm.service`.
 | List managed instance names | `vm-list` |
 | Inspect registry, authority, and runner PID | `sudo vm-status VM` |
 | Attach the offline console | `sudo vm-attach VM` |
+| Run a command in the guest over QGA | `sudo vm-exec VM COMMAND [ARG ...]` |
 | Build and roll out a local working tree | `sudo vm-update VM /path/to/flake` |
 | Roll out an admitted candidate | `sudo vm-rollout VM` |
 | Explicitly start or stop | `sudo systemctl start\|stop VM-vm.service` |

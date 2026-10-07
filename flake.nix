@@ -25,17 +25,31 @@
           text = builtins.readFile ./scripts/carrier-watcher.sh;
         };
 
-      qgaSystemdHealthFor =
-        pkgs:
+      # Both guest helpers share the QEMU guest-agent client library. Ship it
+      # beside the executable and point the helper at it explicitly so the
+      # tools also work when invoked through an absolute store path.
+      qgaToolFor =
+        pkgs: name: script:
+        let
+          client = pkgs.writeText "qga-client.sh" (builtins.readFile ./scripts/qga-client.sh);
+        in
         pkgs.writeShellApplication {
-          name = "nixos-shell-vm-qga-systemd-health";
+          inherit name;
           runtimeInputs = [
             pkgs.coreutils
+            pkgs.gnugrep
             pkgs.jq
             pkgs.socat
           ];
-          text = builtins.readFile ./scripts/qga-systemd-health.sh;
+          text = ''
+            export QGA_CLIENT_LIBRARY=${client}
+            ${builtins.readFile script}
+          '';
         };
+
+      qgaSystemdHealthFor = pkgs: qgaToolFor pkgs "nixos-shell-vm-qga-systemd-health" ./scripts/qga-systemd-health.sh;
+
+      qgaExecFor = pkgs: qgaToolFor pkgs "nixos-shell-vm-qga-exec" ./scripts/qga-exec.sh;
 
       fakeImage =
         pkgs: name: label:
@@ -99,6 +113,7 @@
         {
           "carrier-watcher" = carrierWatcherFor pkgs;
           "qga-systemd-health" = qgaSystemdHealthFor pkgs;
+          "qga-exec" = qgaExecFor pkgs;
         }
       );
 
@@ -349,10 +364,13 @@
                 shellcheck \
                   ${./scripts/carrier-watcher.sh} \
                   ${./scripts/nixos-shell-vm-manager.sh} \
+                  ${./scripts/qga-client.sh} \
+                  ${./scripts/qga-exec.sh} \
                   ${./scripts/qga-systemd-health.sh} \
                   ${./tests/fake-runner.sh} \
                   ${./tests/test-carrier-watcher.sh} \
                   ${./tests/test-manager.sh} \
+                  ${./tests/test-qga-exec.sh} \
                   ${./tests/test-qga-systemd-health.sh}
                 touch "$out"
               '';
@@ -366,6 +384,7 @@
                   gnugrep
                   jq
                   qemu
+                  socat
                   util-linux
                 ];
               }
@@ -402,6 +421,24 @@
               ''
                 bash ${./tests/test-qga-systemd-health.sh} ${
                   lib.getExe self.packages.${system}."qga-systemd-health"
+                }
+                touch "$out"
+              '';
+
+          qga-exec-tests =
+            pkgs.runCommand "nixos-shell-vm-manager-qga-exec-tests"
+              {
+                nativeBuildInputs = with pkgs; [
+                  bash
+                  coreutils
+                  gnugrep
+                  jq
+                  socat
+                ];
+              }
+              ''
+                bash ${./tests/test-qga-exec.sh} ${
+                  lib.getExe self.packages.${system}."qga-exec"
                 }
                 touch "$out"
               '';
