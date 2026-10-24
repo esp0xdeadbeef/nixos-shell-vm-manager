@@ -505,6 +505,51 @@ runner_is_alive() {
   fi
 }
 
+# Exit status of a runner that is no longer alive, or empty while it still is.
+#
+# `launch_image_unlocked` records the runner's status in $CONTROL_DIR/runner.exit
+# from a dedicated waiter, because a subshell that fails in `exec` cannot be
+# reaped again by the supervisor (the status would come back 127 and hide the
+# real code).  The console wrapper remembers the status itself.
+runner_exit_status() {
+  local runner_pid=$1 status
+  if [[ "$CONSOLE_ENABLE" == 1 ]]; then
+    console_exit_status
+    return
+  fi
+  if [[ -r "$CONTROL_DIR/runner.exit" ]]; then
+    status=$(<"$CONTROL_DIR/runner.exit")
+    if [[ "$status" =~ ^[0-9]+$ ]]; then
+      printf '%s\n' "$status"
+      return
+    fi
+  fi
+  if wait "$runner_pid" 2>/dev/null; then
+    status=0
+  else
+    status=$?
+  fi
+  printf '%s\n' "$status"
+}
+
+# Whether a runner exit status means "this image cannot run here at all", as
+# opposed to a guest that merely booted slowly or crashed after starting.
+#
+# 126/127 are the shell's "not executable" / "not found" codes and 78 is our
+# own EX_CONFIG.  The important case on the board is an architecture mismatch:
+# an aarch64 nixos-shell runner whose embedded coreutils (and kernel) are
+# x86_64 fails with `cannot execute binary file: Exec format error` and exits
+# 126 before QEMU is ever spawned.  Treating that as an ordinary health
+# timeout made the supervisor retry a hopeless image, roll back, and finally
+# report "known-good image failed health" -- while the real cause (a stale
+# x86_64 pin admitted to an aarch64 host) stayed invisible.
+runner_exit_is_fatal() {
+  case "$1" in
+    78 | 126 | 127) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 console_exit_status() {
   local status
   status=$(console_pane_value '#{pane_dead_status}' || true)
@@ -551,6 +596,8 @@ prepare_storage_unlocked() {
     rm -f -- "$RUNTIME_DIR/$ROOT_DISK_FILE"
   fi
   rm -f -- "$CONTROL_DIR/qmp.sock" "$CONTROL_DIR/qga.sock"
+  # Stale status from the previous run would be mistaken for this one's.
+  rm -f -- "$CONTROL_DIR/runner.exit"
   if [[ "$PERSISTENT_DISK_ENABLE" == 1 && ! -e "$PERSISTENT_DIR/$PERSISTENT_DISK_FILE" ]]; then
     local temporary="$PERSISTENT_DIR/.${PERSISTENT_DISK_FILE}.tmp.$$"
     qemu-img create -f qcow2 "$temporary" "$PERSISTENT_DISK_SIZE" >/dev/null
@@ -590,9 +637,18 @@ launch_image_unlocked() {
     (
       cd "$RUNTIME_DIR"
       export NIX_DISK_IMAGE="$RUNTIME_DIR/$ROOT_DISK_FILE"
+      # `exec` replaces the subshell, so a failed exec (wrong architecture,
+      # missing interpreter) surfaces only as the subshell's exit status.  Bash
+      # reports 126/127 for that, but the status is easy to lose once the pid
+      # has been reaped -- record it explicitly so the supervisor can tell
+      # "image cannot run here" from "guest booted slowly".
       exec "$runner" "${arguments[@]}" "${qemu_arguments[@]}"
     ) &
     CHILD_PID=$!
+    (
+      wait "$CHILD_PID" 2>/dev/null
+      printf '%s\n' "$?" >"$CONTROL_DIR/runner.exit"
+    ) &
   fi
   atomic_text "$CONTROL_DIR/runner.pid" "$CHILD_PID"
 }
@@ -601,7 +657,18 @@ health_check_unlocked() {
   local child_pid=$1 attempt=1
   while (( attempt <= HEALTH_RETRIES )); do
     if ! runner_is_alive "$child_pid"; then
-      printf '%s: runner process exited before health succeeded\n' "$VM_NAME" >&2
+      local status
+      status=$(runner_exit_status "$child_pid")
+      if runner_exit_is_fatal "$status"; then
+        # The runner never reached the guest: its own closure could not be
+        # executed on this host.  Retrying or rolling back cannot help, so say
+        # what actually happened instead of "exited before health succeeded".
+        printf '%s: runner image is not runnable on this host (exit %s); refusing to retry\n' \
+          "$VM_NAME" "$status" >&2
+        return 2
+      fi
+      printf '%s: runner process exited before health succeeded (exit %s)\n' \
+        "$VM_NAME" "$status" >&2
       return 1
     fi
     if timeout --foreground "$HEALTH_TIMEOUT_SECONDS" bash -c "$HEALTH_COMMAND"; then
@@ -681,8 +748,9 @@ activate_event() {
   local selected_slot=$SELECTED_SLOT selected_image=$SELECTED_IMAGE
   set_phase_unlocked activating
   launch_image_unlocked "$selected_image"
-  local candidate_pid=$CHILD_PID
-  if health_check_unlocked "$candidate_pid"; then
+  local candidate_pid=$CHILD_PID health_status=0
+  health_check_unlocked "$candidate_pid" || health_status=$?
+  if (( health_status == 0 )); then
     if [[ -e "$CONTROL_DIR/stopped" ]]; then
       stop_child "$candidate_pid"
       rm -f -- "$CONTROL_DIR/runner.pid" "$CONTROL_DIR/qmp.sock" "$CONTROL_DIR/qga.sock"
@@ -707,6 +775,16 @@ activate_event() {
     unlock_lifecycle
     return 75
   fi
+  # health_check_unlocked returns 2 when the runner image itself cannot execute
+  # on this host (architecture mismatch, missing interpreter).  Retrying or
+  # combining forward/backward is pointless there: the *selected* image is
+  # wrong, and rolling back to a sibling built the same way only hides it.
+  if (( health_status == 2 )); then
+    set_phase_unlocked operator-intervention \
+      "selected image is not runnable on this host (architecture mismatch?)"
+    unlock_lifecycle
+    return 1
+  fi
   if [[ "$selected_slot" != candidate ]]; then
     set_phase_unlocked operator-intervention "known-good image failed health"
     unlock_lifecycle
@@ -723,8 +801,9 @@ activate_event() {
   fi
 
   launch_image_unlocked "$recovery"
-  local recovery_pid=$CHILD_PID
-  if health_check_unlocked "$recovery_pid"; then
+  local recovery_pid=$CHILD_PID recovery_status=0
+  health_check_unlocked "$recovery_pid" || recovery_status=$?
+  if (( recovery_status == 0 )); then
     set_phase_unlocked running
     printf '%s: candidate failed; healthy current image restored\n' "$VM_NAME" >&2
     unlock_lifecycle
@@ -732,6 +811,12 @@ activate_event() {
   fi
   stop_child "$recovery_pid"
   rm -f -- "$CONTROL_DIR/runner.pid"
+  if (( recovery_status == 2 )); then
+    set_phase_unlocked operator-intervention \
+      "recovery image is not runnable on this host (architecture mismatch?)"
+    unlock_lifecycle
+    return 1
+  fi
   set_phase_unlocked operator-intervention "candidate and recovery image failed health"
   unlock_lifecycle
   return 1

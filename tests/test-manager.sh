@@ -240,7 +240,7 @@ bash "$manager" register "$config" "$baseline" host-generation baseline-id
 mkdir -p "$test_root/control"
 printf 'stale guest-agent socket placeholder\n' >"$test_root/control/qga.sock"
 bash "$manager" prepare-start "$config"
-bash "$manager" supervise "$config" &
+bash "$manager" supervise "$config" 2>"$test_root/log" &
 supervisor_pid=$!
 wait_for 'baseline promotion' "test \"\$(jq -r .current.image '$test_root/state/state.json')\" = '$baseline'"
 [[ $(cat "$observation/active") == baseline ]]
@@ -476,6 +476,44 @@ grep -q '^flake update --refresh --flake path:' "$FAKE_NIX_LOG"
 
 bash "$manager" stop "$config" "$supervisor_pid"
 wait "$supervisor_pid"
+supervisor_pid=
+
+# A runner that cannot execute on this host (architecture mismatch) must be
+# diagnosed as such, not reported as a health failure.  This runs last: the
+# supervisor deliberately parks in operator-intervention, which would disturb
+# the scenarios above.
+supervisor_pid=
+# An earlier scenario leaves the stop marker in place; a fresh supervisor would
+# then park in `idle` and never launch anything.
+rm -f -- "$test_root/control/stopped"
+bash "$manager" supervise "$config" 2>>"$test_root/log" &
+supervisor_pid=$!
+wait_for 'supervisor up' "kill -0 $supervisor_pid 2>/dev/null && test -s '$test_root/state/state.json'"
+wait_for 'supervisor settled' "test \"\$(jq -r .phase '$test_root/state/state.json')\" = running"
+unrunnable="$test_root/images/unrunnable"
+mkdir -p "$unrunnable/bin"
+cat >"$unrunnable/bin/run-test-vm-vm" <<'UNRUNNABLE'
+#!/usr/bin/env bash
+echo "cannot execute binary file: Exec format error" >&2
+exit 126
+UNRUNNABLE
+chmod +x "$unrunnable/bin/run-test-vm-vm"
+
+bash "$manager" register "$config" "$unrunnable" local-working-tree local-unrunnable
+kill -USR1 "$supervisor_pid"
+wait_for 'unrunnable diagnosis' \
+  "grep -q 'not runnable on this host' '$test_root/log' && test \"\$(jq -r .phase '$test_root/state/state.json')\" = operator-intervention"
+# Diagnosed as a host/architecture problem, not a health failure: it must not
+# be quarantined through fail_candidate_unlocked (which would set .failed to
+# this image and move to phase rolling-back), and no recovery attempt is made.
+[[ $(jq -r '.failed.image' "$test_root/state/state.json") != "$unrunnable" ]]
+[[ $(jq -r '.lastError' "$test_root/state/state.json") == *'not runnable on this host'* ]]
+grep -q 'refusing to retry' "$test_root/log"
+# The previously good image is still current, and its runner is still alive.
+[[ $(jq -r '.current.image' "$test_root/state/state.json") == "$good" ]]
+
+bash "$manager" stop "$config" "$supervisor_pid"
+wait "$supervisor_pid" || true
 supervisor_pid=
 
 printf 'all manager module tests passed\n'

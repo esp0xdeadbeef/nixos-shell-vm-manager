@@ -242,6 +242,26 @@ let
           type = types.ints.positive;
           default = 30;
         };
+
+        # Extra systemd service settings for the generated `<name>-vm.service`.
+        #
+        # Needed for unit-level relationships the instance schema does not
+        # model, chiefly `Conflicts=`: two VMs that attach to the same host
+        # bridge ports must never run together, but nothing in the manager's
+        # own lifecycle knows about that, so the host has to state it.  Merged
+        # over the generated settings, so an instance can also override a
+        # default (e.g. Restart) deliberately.
+        serviceConfig = mkOption {
+          type = types.attrsOf types.anything;
+          default = { };
+          example = {
+            Conflicts = [ "other-vm.service" ];
+          };
+          description = ''
+            Extra `systemd.service` settings merged into the generated
+            `<name>-vm.service` unit.
+          '';
+        };
       };
 
       console = {
@@ -479,7 +499,8 @@ let
         SuccessExitStatus = [ 75 ];
         KillMode = "mixed";
         TimeoutStopSec = "${toString (instance.runner.stopGraceSeconds + 10)}s";
-      };
+      }
+      // instance.runner.serviceConfig;
     }
   ) instances;
 
