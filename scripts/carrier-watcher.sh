@@ -57,6 +57,7 @@ run_action() {
     if [[ $status -eq 75 && $action == carrier-start ]]; then
       printf 'carrier-up preserved explicit stop for %s\n' "$config" >&2
     elif [[ $status -ne 0 ]]; then
+      printf '%s failed for %s (status %s)\n' "$action" "$config" "$status" >&2
       return "$status"
     fi
   done
@@ -73,14 +74,48 @@ apply_state() {
   fi
 }
 
+# Debounce: a carrier transition must be observed on this many consecutive
+# polls before it is acted on. Without it, the very first poll acts
+# immediately, and at boot that poll races the interface the carrier is
+# derived from -- the watcher sees up->down->up within a second and stops the
+# router VM for a state that never existed. FS-920: a failure response needs a
+# defined observation window, not a single sample. 3 polls * 5s = 15s.
+DEBOUNCE_SAMPLES=${DEBOUNCE_SAMPLES:-3}
+if ! [[ $DEBOUNCE_SAMPLES =~ ^[0-9]+$ ]] || (( DEBOUNCE_SAMPLES < 1 )); then
+  printf 'invalid debounce samples: %s\n' "$DEBOUNCE_SAMPLES" >&2
+  exit 2
+fi
+
 last_state=
+pending_state=
+pending_count=0
 iterations=0
 while true; do
   current_state=$(carrier_state)
-  if [[ $current_state != "$last_state" ]]; then
-    printf '%s\n' "$current_state" >"$STATE_FILE"
-    apply_state "$current_state"
-    last_state=$current_state
+  if [[ $current_state == "$last_state" ]]; then
+    # Settled: drop any partially observed transition.
+    pending_state=
+    pending_count=0
+  else
+    if [[ $current_state == "$pending_state" ]]; then
+      pending_count=$((pending_count + 1))
+    else
+      pending_state=$current_state
+      pending_count=1
+    fi
+    if (( pending_count >= DEBOUNCE_SAMPLES )); then
+      # Only record the observed carrier transition as handled once the
+      # delegated action has actually taken effect. A failed (or transiently
+      # unavailable) manager call must be retried on the next poll, otherwise a
+      # flap that races the VM/interface becoming ready leaves the VM stuck in
+      # the wrong state until the next unrelated transition.
+      if apply_state "$current_state"; then
+        printf '%s\n' "$current_state" >"$STATE_FILE"
+        last_state=$current_state
+        pending_state=
+        pending_count=0
+      fi
+    fi
   fi
 
   iterations=$((iterations + 1))
