@@ -268,16 +268,22 @@ let
         # model, chiefly `Conflicts=`: two VMs that attach to the same host
         # bridge ports must never run together, but nothing in the manager's own
         # lifecycle knows about that, so the host has to state it.  Rendering it
-        # in `[Service]` is a no-op, which is the trap this option removes.
+        # in `serviceConfig` is a no-op ("Unknown key 'Conflicts' in section
+        # [Service], ignoring"), which is the trap this option removes.
+        #
+        # Keys are camelCase NixOS `systemd.services.<name>` options (`conflicts`,
+        # `wants`, `requires`), not raw systemd `[Unit]` keys: the option names are
+        # what NixOS translates into the unit section.
         unitConfig = mkOption {
           type = types.attrsOf types.anything;
           default = { };
           example = {
-            Conflicts = [ "other-vm.service" ];
+            conflicts = [ "other-vm.service" ];
           };
           description = ''
-            Extra `systemd.unit` settings merged into the `[Unit]` section of the
-            generated `<name>-vm.service` unit.
+            Extra unit-level settings merged into the generated
+            `<name>-vm.service` service definition, using the camelCase NixOS
+            `systemd.services.<name>` option names.
           '';
         };
       };
