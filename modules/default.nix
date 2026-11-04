@@ -245,21 +245,39 @@ let
 
         # Extra systemd service settings for the generated `<name>-vm.service`.
         #
+        # Merged over the generated settings, so an instance can also override a
+        # default (e.g. Restart) deliberately.  These land in the `[Service]`
+        # section: unit-level relationships (`Conflicts=`, `After=`, `Wants=`)
+        # belong in `unitConfig` below, because systemd silently ignores them in
+        # `[Service]` with "Unknown key ... ignoring".
+        serviceConfig = mkOption {
+          type = types.attrsOf types.anything;
+          default = { };
+          example = {
+            Restart = "on-failure";
+          };
+          description = ''
+            Extra `systemd.service` settings merged into the `[Service]` section
+            of the generated `<name>-vm.service` unit.
+          '';
+        };
+
+        # Extra `[Unit]` settings for the generated `<name>-vm.service`.
+        #
         # Needed for unit-level relationships the instance schema does not
         # model, chiefly `Conflicts=`: two VMs that attach to the same host
-        # bridge ports must never run together, but nothing in the manager's
-        # own lifecycle knows about that, so the host has to state it.  Merged
-        # over the generated settings, so an instance can also override a
-        # default (e.g. Restart) deliberately.
-        serviceConfig = mkOption {
+        # bridge ports must never run together, but nothing in the manager's own
+        # lifecycle knows about that, so the host has to state it.  Rendering it
+        # in `[Service]` is a no-op, which is the trap this option removes.
+        unitConfig = mkOption {
           type = types.attrsOf types.anything;
           default = { };
           example = {
             Conflicts = [ "other-vm.service" ];
           };
           description = ''
-            Extra `systemd.service` settings merged into the generated
-            `<name>-vm.service` unit.
+            Extra `systemd.unit` settings merged into the `[Unit]` section of the
+            generated `<name>-vm.service` unit.
           '';
         };
       };
@@ -502,6 +520,7 @@ let
       }
       // instance.runner.serviceConfig;
     }
+    // instance.runner.unitConfig
   ) instances;
 
   carrierServices = mapAttrs' (
