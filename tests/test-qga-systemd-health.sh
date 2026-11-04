@@ -79,9 +79,11 @@ start_listener 0
 "$health_check" "$socket"
 jq -se '
   map(select(.execute == "guest-exec"))[0].arguments
-  | .path == "/run/current-system/sw/bin/bash"
-    and .arg[0] == "-c"
-    and (.arg[1] | contains("list-units --state=failed"))
+  | .path == "/run/current-system/sw/bin/env"
+    and (.arg | index("PATH=/run/current-system/sw/bin:/run/current-system/sw/sbin") != null)
+    and (.arg | index("/run/current-system/sw/bin/bash") != null)
+    and (.arg | index("-c") != null)
+    and (.arg[1:] | map(select(contains("list-units --state=failed"))) | length == 1)
 ' "$request_log" >/dev/null
 kill "$listener_pid"
 wait "$listener_pid" 2>/dev/null || true
@@ -90,11 +92,19 @@ listener_pid=
 # Callers can still supply a stricter, VM-specific command.
 start_listener 0
 "$health_check" "$socket" "$guest_command" "${guest_arguments[@]}"
-expected_arguments=$(printf '%s\n' "${guest_arguments[@]}" | jq -R . | jq -s .)
-jq -se --arg path "$guest_command" --argjson expected "$expected_arguments" '
+expected_arguments=$(printf '%s\n' \
+  "PATH=/run/current-system/sw/bin:/run/current-system/sw/sbin" \
+  "HOME=/root" \
+  "USER=root" \
+  "LOGNAME=root" \
+  "SHELL=/run/current-system/sw/bin/bash" \
+  "TERM=dumb" \
+  "$guest_command" \
+  "${guest_arguments[@]}" | jq -R . | jq -s .)
+jq -se --argjson expected "$expected_arguments" '
   map(select(.execute == "guest-exec"))[0].arguments
   == {
-    path: $path,
+    path: "/run/current-system/sw/bin/env",
     arg: $expected,
     "capture-output": true
   }

@@ -301,6 +301,7 @@ debugging session:
 sudo vm-exec my-vm systemctl status container@core.service --no-pager -l
 sudo vm-exec my-vm journalctl -u container@core.service -n 50 --no-pager
 sudo vm-exec my-vm ip link del dev cor-cbcoru-913
+sudo vm-exec my-vm nft list tables
 ```
 
 Arguments after the VM name are passed to the guest verbatim; no shell quoting
@@ -308,8 +309,44 @@ crosses the host/guest boundary. If a shell is needed, ask the guest for one
 explicitly:
 
 ```console
-sudo vm-exec my-vm /run/current-system/sw/bin/bash -c 'systemctl list-units --state=failed'
+sudo vm-exec my-vm bash -c 'systemctl list-units --state=failed'
 ```
+
+### Guest environment
+
+QGA's `guest-exec` does not spawn a shell and does not build a login
+environment: qemu-ga forks the binary and hands it the environment of
+`qemu-guest-agent.service`. That unit's `PATH` contains only the agent's own
+closure, so a bare command name used to fail with "command not found" and
+every diagnostic had to spell out `/run/current-system/sw/bin/...`.
+
+Guest commands therefore run under a normalized environment rather than the
+service's:
+
+| Variable  | Default                                                  |
+| --------- | -------------------------------------------------------- |
+| `PATH`    | `/run/current-system/sw/bin:/run/current-system/sw/sbin` |
+| `HOME`    | `/root`                                                  |
+| `USER`    | `root`                                                   |
+| `LOGNAME` | `root`                                                   |
+| `SHELL`   | `/run/current-system/sw/bin/bash`                        |
+| `TERM`    | `dumb`                                                   |
+
+Each is overridable per invocation with `QGA_GUEST_PATH`, `QGA_GUEST_HOME`,
+`QGA_GUEST_USER`, `QGA_GUEST_LOGNAME`, `QGA_GUEST_SHELL` and `QGA_GUEST_TERM`.
+Setting `QGA_GUEST_ENV=0` opts out of normalization entirely and restores the
+raw passthrough of the agent's own environment.
+
+This context is the guest's mount and network namespace, not any container's.
+To reach container-local state, enter it explicitly:
+
+```console
+sudo vm-exec my-vm podman exec core nft list tables
+sudo vm-exec my-vm nsenter -t "$(vm-exec my-vm systemctl show -p MainPID --value container@core.service)" -n nft list tables
+```
+
+Note that `capture-output` buffers guest stdout and stderr until the command
+exits, so output is not streamed while a command runs.
 
 The command runs only while the VM service is active and its guest agent socket
 exists. The guest exit status becomes the exit status of `vm-exec`, so it can

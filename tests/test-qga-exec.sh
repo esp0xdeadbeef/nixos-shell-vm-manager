@@ -81,12 +81,72 @@ fi
 jq -se '
   map(select(.execute == "guest-exec"))[0].arguments
   == {
-    path: "/run/current-system/sw/bin/echo",
-    arg: ["hello"],
+    path: "/run/current-system/sw/bin/env",
+    arg: [
+      "PATH=/run/current-system/sw/bin:/run/current-system/sw/sbin",
+      "HOME=/root",
+      "USER=root",
+      "LOGNAME=root",
+      "SHELL=/run/current-system/sw/bin/bash",
+      "TERM=dumb",
+      "/run/current-system/sw/bin/echo",
+      "hello"
+    ],
     "capture-output": true
   }
 ' "$test_root/qga.log" >/dev/null
 stop_listener
+
+# The guest command runs in a normalized environment, not in the environment of
+# qemu-guest-agent.service: `nft` and friends must resolve through the system
+# profile and $HOME must be populated.  Regression test for operators having to
+# spell out /run/current-system/sw/bin/... for every diagnostic.
+QGA_OUT_DATA=$(printf 'normalized\n' | base64 -w0)
+export QGA_OUT_DATA
+start_listener
+"$qga_exec" "$test_root/qga.sock" /run/current-system/sw/bin/env \
+  >"$test_root/env.stdout" 2>"$test_root/env.stderr"
+jq -se '
+  map(select(.execute == "guest-exec"))[0].arguments.arg
+  | index("PATH=/run/current-system/sw/bin:/run/current-system/sw/sbin") != null
+    and index("HOME=/root") != null
+' "$test_root/qga.log" >/dev/null
+stop_listener
+
+# QGA_GUEST_ENV=0 keeps the raw "no shell, no environment" passthrough for
+# callers that deliberately need the agent's own environment.
+QGA_OUT_DATA=$(printf 'raw\n' | base64 -w0)
+export QGA_OUT_DATA
+export QGA_GUEST_ENV=0
+start_listener
+"$qga_exec" "$test_root/qga.sock" /run/current-system/sw/bin/echo raw \
+  >/dev/null 2>&1
+jq -se '
+  map(select(.execute == "guest-exec"))[0].arguments
+  == {
+    path: "/run/current-system/sw/bin/echo",
+    arg: ["raw"],
+    "capture-output": true
+  }
+' "$test_root/qga.log" >/dev/null
+stop_listener
+unset QGA_GUEST_ENV
+
+# Individual variables can be overridden without disabling normalization.
+QGA_OUT_DATA=$(printf 'override\n' | base64 -w0)
+export QGA_OUT_DATA
+export QGA_GUEST_PATH=/opt/bin:/run/current-system/sw/bin
+export QGA_GUEST_HOME=/home/operator
+start_listener
+"$qga_exec" "$test_root/qga.sock" /run/current-system/sw/bin/echo hi \
+  >/dev/null 2>&1
+jq -se '
+  map(select(.execute == "guest-exec"))[0].arguments.arg
+  | index("PATH=/opt/bin:/run/current-system/sw/bin") != null
+    and index("HOME=/home/operator") != null
+' "$test_root/qga.log" >/dev/null
+stop_listener
+unset QGA_GUEST_PATH QGA_GUEST_HOME
 
 # The guest exit status is preserved, and stderr is forwarded.
 export QGA_GUEST_EXIT_CODE=3

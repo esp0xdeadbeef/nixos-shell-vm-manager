@@ -17,6 +17,54 @@ if [[ ! $response_timeout_seconds =~ ^[0-9]+([.][0-9]+)?$ ]]; then
   return 64
 fi
 
+# `guest-exec` does not spawn a shell and does not build a login environment:
+# qemu-ga forks the binary directly and hands it the environment of
+# qemu-guest-agent.service.  That unit's PATH is only the agent's own closure,
+# so a bare `vm-exec VM nft ...` failed with "command not found" and callers
+# had to spell out /run/current-system/sw/bin/... for every diagnostic.
+#
+# Normalize the guest environment here, in the one place both qga-exec and the
+# health check funnel through, so a guest command behaves like a root shell in
+# the booted system rather than like a service binary.
+guest_env_path=${QGA_GUEST_PATH:-/run/current-system/sw/bin:/run/current-system/sw/sbin}
+guest_env_home=${QGA_GUEST_HOME:-/root}
+guest_env_user=${QGA_GUEST_USER:-root}
+guest_env_logname=${QGA_GUEST_LOGNAME:-$guest_env_user}
+guest_env_shell=${QGA_GUEST_SHELL:-/run/current-system/sw/bin/bash}
+
+# `capture-output` buffers stdout/stderr until exit, so a guest command that
+# writes anything other than a terminal (and that is most of them) would block
+# on a full pipe or, worse, get SIGPIPE'd by its own producer.  Present a
+# sane non-interactive terminal identity instead of inheriting "no TERM".
+guest_env_term=${QGA_GUEST_TERM:-dumb}
+
+# Assemble the prefix passed to guest-exec as: env PATH=... HOME=... CMD ARG...
+# `env` is resolved through the guest's system profile, which is why the
+# wrapper itself must be addressed by absolute path.
+qga_guest_env_wrapper=/run/current-system/sw/bin/env
+
+qga_build_env_arguments() {
+  local arguments_json=$1
+
+  jq -cn \
+    --arg path "$guest_env_path" \
+    --arg home "$guest_env_home" \
+    --arg user "$guest_env_user" \
+    --arg logname "$guest_env_logname" \
+    --arg shell "$guest_env_shell" \
+    --arg term "$guest_env_term" \
+    --argjson arguments "$arguments_json" '
+      [
+        "PATH=\($path)",
+        "HOME=\($home)",
+        "USER=\($user)",
+        "LOGNAME=\($logname)",
+        "SHELL=\($shell)",
+        "TERM=\($term)"
+      ] + $arguments
+    '
+}
+
 # Guest commands are polled until they exit. 480 * 0.25s == 120s.
 qga_poll_attempts=${QGA_POLL_ATTEMPTS:-480}
 qga_poll_interval_seconds=${QGA_POLL_INTERVAL_SECONDS:-0.25}
@@ -132,10 +180,26 @@ qga_run() {
       --arg value "$argument" \
       '$current + [$value]')
   done
+
+  local guest_path guest_arguments_json
+  if [[ ${QGA_GUEST_ENV:-1} == 1 ]]; then
+    guest_path=$qga_guest_env_wrapper
+    # The wrapper consumes the assignments, then execs the real command, so
+    # the argument list it receives is `ASSIGNMENT... COMMAND ARG...`.
+    guest_arguments_json=$(jq -cn \
+      --arg command "$guest_command" \
+      --argjson arguments "$arguments_json" \
+      '[$command] + $arguments')
+    guest_arguments_json=$(qga_build_env_arguments "$guest_arguments_json")
+  else
+    guest_path=$guest_command
+    guest_arguments_json=$arguments_json
+  fi
+
   local execute_request execute_response guest_pid
   execute_request=$(jq -cn \
-    --arg path "$guest_command" \
-    --argjson arguments "$arguments_json" '
+    --arg path "$guest_path" \
+    --argjson arguments "$guest_arguments_json" '
       {
         execute: "guest-exec",
         arguments: {
