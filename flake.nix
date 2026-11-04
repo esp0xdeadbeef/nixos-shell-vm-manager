@@ -162,6 +162,26 @@
               }
             ];
           };
+          unitConflictEval = lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                system.stateVersion = "26.05";
+                services.nixosShellVmManager = {
+                  enable = true;
+                  instances.conflicting = {
+                    image = fakeImage pkgs "conflicting" "baseline";
+                    healthCheck.command = "true";
+                    # Two instances sharing host bridge ports must never run
+                    # together. `Conflicts=` is a [Unit] directive: rendered in
+                    # [Service] it is a no-op ("Unknown key ... ignoring").
+                    runner.unitConfig.Conflicts = [ "other-vm.service" ];
+                  };
+                };
+              }
+            ];
+          };
           invalidRunnerPath = lib.nixosSystem {
             inherit system;
             modules = [
@@ -318,6 +338,9 @@
             assert
               evaluation.config.services.nixosShellVmManager.instances.test-vm.runner.relativePath
               == "bin/run-compatible-vm";
+            assert
+              unitConflictEval.config.systemd.services.conflicting-vm.unitConfig.Conflicts
+              == [ "other-vm.service" ];
             assert evaluation.config.services.nixosShellVmManager.instances.test-vm.console.enable;
             assert
               evaluation.config.services.nixosShellVmManager.instances.test-vm.console.socketPath

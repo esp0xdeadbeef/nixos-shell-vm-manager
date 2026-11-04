@@ -243,23 +243,44 @@ let
           default = 30;
         };
 
-        # Extra systemd service settings for the generated `<name>-vm.service`.
+        # Extra `[Service]` settings for the generated `<name>-vm.service`.
         #
-        # Needed for unit-level relationships the instance schema does not
-        # model, chiefly `Conflicts=`: two VMs that attach to the same host
-        # bridge ports must never run together, but nothing in the manager's
-        # own lifecycle knows about that, so the host has to state it.  Merged
-        # over the generated settings, so an instance can also override a
-        # default (e.g. Restart) deliberately.
+        # Merged over the generated settings, so an instance can also override a
+        # default (e.g. Restart) deliberately.  Unit-level relationships
+        # (`Conflicts=`) do NOT belong here: systemd renders these into
+        # `[Service]`, where `Conflicts=` is ignored with
+        # "Unknown key 'Conflicts' in section [Service], ignoring".  Use
+        # {option}`unitConfig` for those.
         serviceConfig = mkOption {
           type = types.attrsOf types.anything;
           default = { };
           example = {
-            Conflicts = [ "other-vm.service" ];
+            Restart = "on-failure";
           };
           description = ''
-            Extra `systemd.service` settings merged into the generated
-            `<name>-vm.service` unit.
+            Extra `systemd.service` settings merged into the `[Service]` section
+            of the generated `<name>-vm.service` unit.
+          '';
+        };
+
+        # Extra unit-level settings for the generated `<name>-vm.service`.
+        #
+        # Needed for relationships the instance schema does not model, chiefly
+        # `conflicts`: two VMs that attach to the same host bridge ports must
+        # never run together, but nothing in the manager's own lifecycle knows
+        # that, so the host has to state it.  Keys are camelCase NixOS
+        # `systemd.services.<name>` option names (`conflicts`, `wants`, …),
+        # which is what NixOS translates into the `[Unit]` section.
+        unitConfig = mkOption {
+          type = types.attrsOf types.anything;
+          default = { };
+          example = {
+            conflicts = [ "other-vm.service" ];
+          };
+          description = ''
+            Extra unit-level settings merged into the generated
+            `<name>-vm.service` service definition, using the camelCase NixOS
+            `systemd.services.<name>` option names.
           '';
         };
       };
@@ -501,6 +522,7 @@ let
         TimeoutStopSec = "${toString (instance.runner.stopGraceSeconds + 10)}s";
       }
       // instance.runner.serviceConfig;
+      unitConfig = instance.runner.unitConfig;
     }
   ) instances;
 
