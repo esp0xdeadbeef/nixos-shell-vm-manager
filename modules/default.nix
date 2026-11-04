@@ -524,9 +524,9 @@ let
         KillMode = "mixed";
         TimeoutStopSec = "${toString (instance.runner.stopGraceSeconds + 10)}s";
       }
-      // instance.runner.serviceConfig;
+      // instance.runner.serviceConfig
+      // instance.runner.unitConfig;
     }
-    // instance.runner.unitConfig
   ) instances;
 
   carrierServices = mapAttrs' (
