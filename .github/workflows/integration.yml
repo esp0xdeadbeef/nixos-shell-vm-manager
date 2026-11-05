@@ -1,21 +1,21 @@
 name: Integration tests
 
-# These checks boot real NixOS VMs with QEMU and wait on guest state for up to
-# 900s at a time. They need hardware acceleration to be reliable: on a runner
-# without /dev/kvm the test driver falls back to TCG emulation, where the
-# guest-shutdown-recovery waits in `systemd-integration` exceed their timeouts.
+# Boots a real NixOS VM and waits on guest state for up to 900s at a time.
 #
-# They are therefore manual by design: run them from the Actions tab, or point
-# `runs-on` at a self-hosted runner that exposes /dev/kvm. They are not part of
-# the push/PR gate, so a slow or absent accelerator can never block a change
-# that the hermetic checks in ci.yml already cover.
+# `systemd-integration` waits that long for guest-shutdown recovery, which does
+# not complete under TCG emulation. A hosted runner without /dev/kvm therefore
+# cannot run it reliably, so it is manual by design: start it from the Actions
+# tab, or point `runs-on` at a self-hosted runner that exposes /dev/kvm.
+#
+# It is not part of the push/PR gate. `vm-logs-integration` does not depend on
+# KVM and is covered by the blocking checks in ci.yml.
 on:
   workflow_dispatch:
     inputs:
       checks:
         description: Space-separated check names to run
         required: false
-        default: systemd-integration vm-logs-integration
+        default: systemd-integration
 
 permissions:
   contents: read

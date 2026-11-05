@@ -52,3 +52,18 @@ jobs:
             nix build --no-link --print-build-logs ".#checks.x86_64-linux.${check}"
             echo "::endgroup::"
           done
+
+  vm-logs-integration:
+    name: vm-logs read-only mount integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/determinate-nix-action@v3
+
+      # Boots a real VM and attaches a real qcow2 image over NBD, so it needs
+      # QEMU but not KVM: it passes under TCG emulation on a hosted runner.
+      # This is the check that proves the analyser cannot modify the evidence.
+      - name: Run vm-logs integration test
+        run: nix build --no-link --print-build-logs ".#checks.x86_64-linux.vm-logs-integration"
