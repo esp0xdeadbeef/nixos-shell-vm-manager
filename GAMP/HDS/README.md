@@ -28,6 +28,7 @@ does not prescribe shell functions, Nix module internals, or test results.
 | FS-110-HDS-010 | FS-110 | Per-VM coordination and shared build capacity |
 | FS-120-HDS-010 | FS-120 | Consumer-flake integration surface |
 | FS-130-HDS-010 | FS-130 | Root operator command environment |
+| FS-170-HDS-010 | FS-170 | Offline read-only image attachment environment |
 | FS-140-HDS-010 | FS-140 | Construction, integration, and acceptance environments |
 | FS-150-HDS-010 | FS-150 | Stable host-local interactive terminal endpoint |
 | FS-160-HDS-010 | FS-160 | Optional pin-refresh construction environment |

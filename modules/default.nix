@@ -63,12 +63,14 @@ let
       socat
     ];
     text = ''
-      export QGA_CLIENT_LIBRARY=${
-        pkgs.writeText "qga-client.sh" (builtins.readFile ../scripts/qga-client.sh)
-      }
+      export QGA_CLIENT_LIBRARY=${pkgs.writeText "qga-client.sh" (builtins.readFile ../scripts/qga-client.sh)}
       ${builtins.readFile ../scripts/qga-exec.sh}
     '';
   };
+
+  # Offline log analysis for downed VM images, installed on the host so an
+  # operator can inspect a stopped VM's disk without booting it.
+  vmLogs = import ../lib/mk-vm-logs.nix { inherit pkgs; };
 
   operatorPackage = pkgs.symlinkJoin {
     name = "nixos-shell-vm-manager-operator-commands";
@@ -640,6 +642,7 @@ in
       manager
       operatorPackage
       pkgs.tmux
+      vmLogs
     ];
 
     environment.etc = mapAttrs' (
@@ -666,6 +669,7 @@ in
     systemd.services = vmServices // carrierServices;
 
     system.build.nixosShellVmManager = manager;
+    system.build.nixosShellVmManagerVmLogs = vmLogs;
     system.build.nixosShellVmManagerOperatorCommands = operatorPackage;
     system.build.nixosShellVmManagerCarrierWatcher = carrierWatcher;
   };

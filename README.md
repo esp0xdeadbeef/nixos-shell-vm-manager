@@ -29,6 +29,8 @@ dependency pins and construct a candidate before eligible starts.
 - Root QCOW files default to `/var/cache`, not a persistence mount. Persistent
   guest storage is independently configurable and never rewound by rollback.
 - Per-VM lifecycle locks and a bounded host build-token pool coordinate work.
+- A stopped VM's disk image can be analysed read-only from the host, without
+  booting the guest or using guest networking.
 
 The controlled requirements and design chain are under [`GAMP`](./GAMP).
 
@@ -375,6 +377,7 @@ service `s-test-l-esp-vm.service`.
 | Run a command in the guest over QGA | `sudo vm-exec VM COMMAND [ARG ...]` |
 | Build and roll out a local working tree | `sudo vm-update VM /path/to/flake` |
 | Roll out an admitted candidate | `sudo vm-rollout VM` |
+| Analyse a downed VM's disk image offline | `sudo vm-logs mount\|collect\|umount IMAGE` |
 | Explicitly start or stop | `sudo systemctl start\|stop VM-vm.service` |
 
 `nixos-shell-vm-manager` itself is the internal systemd engine. Subcommands
@@ -418,6 +421,60 @@ sudo systemctl stop my-vm-vm.service
 An explicit start uses the pending candidate only when
 `useCandidateOnExplicitStart` is enabled. Automatic admission never starts a
 stopped service.
+
+## Post-mortem log analysis
+
+`vm-exec` needs a running guest. When a VM has died, `vm-logs` reads the
+diagnostic record straight out of its disk image on the host, without booting
+anything or touching the network:
+
+```console
+sudo vm-logs mount /var/cache/nixos-shell-vm-manager/my-vm/my-vm.qcow2
+# ... inspect the read-only mount, e.g. /var/log/journal, /var/log/dmesg ...
+sudo vm-logs umount /var/cache/nixos-shell-vm-manager/my-vm/my-vm.qcow2
+```
+
+The image is attached read-only over NBD and mounted read-only, so analysis
+cannot alter the evidence. Only regular image files are accepted; a block
+device is refused. The guest root filesystem is located by probing the image, so
+both the bare filesystem these VMs use and images whose root sits inside a
+partition are handled.
+
+To copy a defined set of artifacts instead of mounting interactively:
+
+```console
+sudo vm-logs collect /var/cache/nixos-shell-vm-manager/my-vm/my-vm.qcow2 \
+  --dest /tmp/vm-logs/my-vm
+```
+
+`collect` preserves absolute guest paths, writes a `manifest.json` listing the
+collected and absent artifacts, and releases everything it attached. It reuses
+an active `mount` rather than attaching the same image twice. Use `--path` to
+select exact artifacts, and `--no-mount` to extract through `debugfs` without a
+kernel mount at all.
+
+The default artifact set covers the systemd journal, kernel ring-buffer
+snapshots, and the classic syslog-family files:
+
+```console
+/var/log/journal /var/log/dmesg /var/log/messages /var/log/syslog
+/var/log/kern.log /var/log/boot.log /var/log/nixos-boot.log
+/var/log/daemon.log /var/log/auth.log /var/log/Xorg.0.log /var/crash
+```
+
+Inspect or release outstanding sessions at any time. Releases are idempotent and
+stay possible after the analysing process has exited, because session state is
+recorded under `/run/vm-logs`:
+
+```console
+sudo vm-logs status       # every active session, as JSON
+sudo vm-logs status IMAGE # one image
+sudo vm-logs list
+sudo vm-logs umount IMAGE
+```
+
+NBD attachment requires the `nbd` kernel module. Sessions are keyed by the image
+path, so the same image cannot be attached twice concurrently.
 
 ## Storage
 

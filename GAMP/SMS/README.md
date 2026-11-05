@@ -18,7 +18,13 @@ Scope: implementable modules
 | FS-140-HDS-010-SDS-010-SMS-010 | FS-140-HDS-010-SDS-010 | test modules and evidence entrypoint |
 | FS-150-HDS-010-SDS-010-SMS-010 | FS-150-HDS-010-SDS-010 | console configuration and supervisor adapter |
 | FS-160-HDS-010-SDS-010-SMS-010 | FS-160-HDS-010-SDS-010 | optional pin-refresh construction module |
+| FS-170-HDS-010-SDS-010-SMS-010 | FS-170-HDS-010-SDS-010 | `scripts/vm-logs.sh`, `scripts/vm-log-analyser-lib.sh`, `scripts/vm-log-artifacts.sh` |
 
-All command modules are delivered by `scripts/nixos-shell-vm-manager.sh` as one
-versioned executable with subcommands. The executable accepts only a generated,
+The analysis module is a separate executable, `vm-logs`, because it operates on
+an image file rather than on a managed instance and therefore consumes no
+instance configuration. It is built once by `lib/mk-vm-logs.nix` and exported
+both as `packages.<system>.vm-logs` and as a host package.
+
+The lifecycle command modules are delivered by `scripts/nixos-shell-vm-manager.sh`
+as one versioned executable with subcommands. The executable accepts only a generated,
 root-owned instance configuration for mutating operations.

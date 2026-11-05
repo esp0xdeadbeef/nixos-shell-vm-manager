@@ -47,9 +47,13 @@
           '';
         };
 
-      qgaSystemdHealthFor = pkgs: qgaToolFor pkgs "nixos-shell-vm-qga-systemd-health" ./scripts/qga-systemd-health.sh;
+      qgaSystemdHealthFor =
+        pkgs: qgaToolFor pkgs "nixos-shell-vm-qga-systemd-health" ./scripts/qga-systemd-health.sh;
 
       qgaExecFor = pkgs: qgaToolFor pkgs "nixos-shell-vm-qga-exec" ./scripts/qga-exec.sh;
+
+      # Offline log analysis for downed VM images.
+      vmLogsFor = pkgs: import ./lib/mk-vm-logs.nix { inherit pkgs; };
 
       fakeImage =
         pkgs: name: label:
@@ -114,6 +118,7 @@
           "carrier-watcher" = carrierWatcherFor pkgs;
           "qga-systemd-health" = qgaSystemdHealthFor pkgs;
           "qga-exec" = qgaExecFor pkgs;
+          "vm-logs" = vmLogsFor pkgs;
         }
       );
 
@@ -390,6 +395,9 @@
                   ${./scripts/qga-client.sh} \
                   ${./scripts/qga-exec.sh} \
                   ${./scripts/qga-systemd-health.sh} \
+                  ${./scripts/vm-log-analyser-lib.sh} \
+                  ${./scripts/vm-log-artifacts.sh} \
+                  ${./scripts/vm-logs.sh} \
                   ${./tests/fake-runner.sh} \
                   ${./tests/test-carrier-watcher.sh} \
                   ${./tests/test-manager.sh} \
@@ -460,15 +468,17 @@
                 ];
               }
               ''
-                bash ${./tests/test-qga-exec.sh} ${
-                  lib.getExe self.packages.${system}."qga-exec"
-                }
+                bash ${./tests/test-qga-exec.sh} ${lib.getExe self.packages.${system}."qga-exec"}
                 touch "$out"
               '';
         }
         // lib.optionalAttrs (system == "x86_64-linux") {
           systemd-integration = import ./tests/nixos-test.nix {
             inherit pkgs self;
+          };
+          vm-logs-integration = import ./tests/vm-logs-test.nix {
+            inherit pkgs;
+            vmLogs = self.packages.${system}."vm-logs";
           };
         }
       );

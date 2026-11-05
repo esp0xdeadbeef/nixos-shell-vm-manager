@@ -48,6 +48,10 @@ and fall back to the locally available host-pinned image. Pin refresh shall not
 alter the host generation's approved pins, override an explicit stop, or delay
 rollback and recovery.
 
+An operator shall be able to inspect the recorded logs of a VM that is not
+running, from the VM's disk image on the host, without starting the VM or
+using guest networking. That inspection shall not alter the recorded evidence.
+
 An operator shall be able to attach an interactive terminal to each running VM
 through a stable host-local endpoint. Console access shall not depend on guest
 network connectivity. The endpoint shall remain the same when the manager

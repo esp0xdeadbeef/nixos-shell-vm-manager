@@ -15,7 +15,8 @@ The project's normal verification entrypoint shall actively test required
 baseline construction, complete offline readiness, immutable local capture,
 unified admission, build isolation, provenance and precedence, stop races,
 best-effort pin refresh and host-pinned fallback, health-gated promotion,
-rollback, and persistent-data preservation. Required negative cases shall be
+rollback, persistent-data preservation, and offline read-only post-mortem log
+analysis. Required negative cases shall be
 executed and shall fail when their protected predicate is violated. Construction
 and integration evidence shall not be presented as live host or final system
 acceptance.
@@ -25,6 +26,8 @@ acceptance.
 - A required functional predicate has no active test.
 - A seeded negative is present but does not gate success.
 - Evidence predates the current controlled source or test.
+- Offline analysis is claimed without evidence that the image and its backing
+  file are byte-identical afterwards.
 - SMT or SIT evidence is used to claim HAT or SAT acceptance.
 
 ## Downstream Handoff

@@ -153,6 +153,16 @@ and construct a candidate. Successful results shall use the normal admission
 and rollout transaction; failure shall preserve admitted state and continue
 with the locally available host-pinned image.
 
+### FS-170 Post-mortem Log Analysis of a Stopped VM Image
+
+Fullspec: `GAMP/FS/FS-170-offline-image-log-analysis.md`.
+
+Operators shall be able to attach a stopped VM's disk image read-only, mount its
+guest root, and copy a defined set of recorded diagnostic artifacts without
+starting the VM, executing guest code, using guest networking, or altering the
+evidence. The guest root shall be located by probing the image. A recorded
+attachment shall always be deterministically releasable.
+
 ## Boundaries
 
 - Host generation construction, local development construction, and optional
@@ -166,5 +176,8 @@ with the locally available host-pinned image.
 - Image rollback preserves, but does not rewind, persistent guest data.
 - Rollback and recovery starts never perform pin refresh.
 - Console attachment is host-local and is not a guest-network health signal.
+- Post-mortem analysis reads recorded evidence from an image file. It is not a
+  boot, a health check, or a lifecycle event, and it never mutates image or
+  evidence.
 - HAT and SAT remain outside scope until explicitly authorized by the
   stakeholder.

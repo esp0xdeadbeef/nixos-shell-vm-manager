@@ -22,6 +22,7 @@ Scope: software interfaces and state transitions
 | FS-140-HDS-010-SDS-010 | FS-140-HDS-010 | Layered verification entrypoints |
 | FS-150-HDS-010-SDS-010 | FS-150-HDS-010 | Stable tmux console adapter |
 | FS-160-HDS-010-SDS-010 | FS-160-HDS-010, FS-050-HDS-010, FS-110-HDS-010 | Serialized pin-refresh pipeline |
+| FS-170-HDS-010-SDS-010 | FS-170-HDS-010 | Offline image analysis sessions |
 
 ## State Model
 
