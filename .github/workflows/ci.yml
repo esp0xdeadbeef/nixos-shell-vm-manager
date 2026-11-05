@@ -23,18 +23,23 @@ jobs:
 
       - uses: DeterminateSystems/determinate-nix-action@v3
 
+      # treefmt's CI mode (--ci) implies --no-cache and --fail-on-change.
       - name: Check formatting
-        run: nix fmt -- --check
+        run: nix fmt -- --ci
 
       # These are the fast, hermetic checks: NixOS module evaluation, seedable
       # policy assertions, ShellCheck over every shipped script, and the
       # isolated shell-level suites that drive the manager, carrier watcher and
-      # QGA helpers against fake sockets. None of them need a VM or KVM.
+      # QGA helpers against fake sockets. None of them need a VM or KVM, so
+      # they are reliable on a hosted runner and gate every push and PR.
+      #
+      # The NixOS integration tests boot real VMs and therefore require KVM;
+      # see .github/workflows/integration.yml.
       - name: Run construction checks
         run: |
           set -euo pipefail
           # The runner is x86_64-linux, which is also the only system the
-          # integration checks are defined for.
+          # checks are defined for.
           for check in \
             module-evaluation \
             shellcheck \
@@ -47,44 +52,3 @@ jobs:
             nix build --no-link --print-build-logs ".#checks.x86_64-linux.${check}"
             echo "::endgroup::"
           done
-
-  vm-tests:
-    name: NixOS integration tests
-    runs-on: ubuntu-latest
-    # Boots real VMs, so it is slower and only runs where it is allowed to be:
-    # never to gate an unrelated pull request.
-    if: github.event_name != 'pull_request'
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: DeterminateSystems/determinate-nix-action@v3
-
-      # KVM is not available on standard GitHub-hosted runners, so the test
-      # driver falls back to TCG emulation. This is slower but functional.
-      - name: Report hardware acceleration
-        run: |
-          if [ -w /dev/kvm ]; then
-            echo "KVM available; tests will be hardware-accelerated."
-          else
-            echo "No /dev/kvm; running under TCG (slower)."
-          fi
-
-      - name: Run integration tests
-        run: |
-          set -euo pipefail
-          for check in systemd-integration vm-logs-integration; do
-            echo "::group::checks.x86_64-linux.${check}"
-            nix build --no-link --print-build-logs ".#checks.x86_64-linux.${check}"
-            echo "::endgroup::"
-          done
-
-      - name: Upload test logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nixos-test-logs
-          path: |
-            result/
-          if-no-files-found: ignore
-          retention-days: 7
